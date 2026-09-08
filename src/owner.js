@@ -1,4 +1,4 @@
-import { recentActivity, pauseAll, resumeAll, isGloballyPaused, pause, resetChat } from "./brain.js";
+import { recentActivity, pauseAll, isGloballyPaused, pause, resetChat } from "./brain.js";
 
 export const OWNER_SYSTEM = `את/ה העוזר/ת האישי/ת של קטי שגב, מנהלת הקליניקה CURE MINDSET.
 קטי מדברת אלייך בוואטסאפ, לרוב בהודעה קולית שתומללה, ולכן הטקסט שאת/ה מקבל/ת עשוי להיות מדובר, לא ערוך, ועם שגיאות תמלול. הבן/י את הכוונה, אל תתקן/י אותה.
