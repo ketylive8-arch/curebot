@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: curebot-whatsapp
+    runtime: node
+    plan: starter          # לא free — שירות חינמי נכבה והחיבור לוואטסאפ נופל
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    disk:
+      name: curebot-auth   # שומר את החיבור לוואטסאפ בין הפעלות מחדש
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false        # מדביקים בדשבורד, לא בקובץ
+      - key: OWNER_NUMBER
+        value: "972543032349"
+      - key: AUTH_DIR
+        value: /data/auth
+      - key: PANEL_KEY
+        sync: false        # סיסמה לדף ה-QR
+      - key: MODEL
+        value: claude-sonnet-4-6
+      - key: OPENAI_API_KEY
+        sync: false        # לתמלול הודעות קוליות
+      - key: STT_MODEL
+        value: whisper-1
