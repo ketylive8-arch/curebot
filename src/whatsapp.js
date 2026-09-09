@@ -1,8 +1,13 @@
-import makeWASocket, {
+import baileys, {
   DisconnectReason,
   useMultiFileAuthState,
   fetchLatestBaileysVersion
 } from "@whiskeysockets/baileys";
+
+// Baileys 6.7.x ships as CommonJS; under ESM its default export can arrive
+// wrapped as { default: fn } instead of the function itself. Normalize so
+// makeWASocket is always callable.
+const makeWASocket = baileys.default || baileys;
 import { Boom } from "@hapi/boom";
 import pino from "pino";
 import QRCode from "qrcode";
