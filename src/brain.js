@@ -131,9 +131,10 @@ export async function think(jid, userText) {
     raw = await callOpenAI(SYSTEM_PROMPT, messages, { retries: 3 });
   } catch (err) {
     console.error("[brain] כל הניסיונות נכשלו:", err?.message);
+    // כישלון זמני של ה-AI — עונים בעדינות אבל לא משהים את השיחה ולא שולחים התראה.
     return {
-      reply: "היי, קיבלתי את ההודעה שלך 💛 אני מעבירה לקטי והיא תחזור אלייך אישית ממש בקרוב.",
-      ended: false, alert: true, human: true, infoCard: false
+      reply: "היי, קיבלתי את ההודעה שלך 💛 אני כאן — ספרי לי, מה מביא אותך?",
+      ended: false, alert: false, human: false, infoCard: false
     };
   }
 
