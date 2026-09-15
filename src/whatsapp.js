@@ -143,6 +143,9 @@ async function handleMessage(m) {
     m.message?.extendedTextMessage?.text ||
     "";
 
+  // רישום אבחון: כל הודעה פרטית שנכנסת (לא קבוצה/ערוץ)
+  console.log(`[wa] 📩 DM מ-${jid} | owner:${!!isOwner} | audio:${!!m.message?.audioMessage} | טקסט:"${(text || "").slice(0, 60)}"`);
+
   // ===== הודעה קולית =====
   const audio = m.message?.audioMessage;
   if (!text.trim() && audio) {
@@ -206,6 +209,7 @@ async function handleMessage(m) {
   await sock.sendPresenceUpdate("paused", jid);
 
   await sock.sendMessage(jid, { text: out.reply });
+  console.log("[wa] ✅ נשלחה תשובה ל:", jid);
   state.handled++;
   countHandled();
 
