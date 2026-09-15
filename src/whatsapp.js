@@ -134,6 +134,7 @@ async function handleMessage(m) {
   if (jid === "status@broadcast") return;      // סטטוסים
   if (jid.endsWith("@g.us")) return;           // קבוצות — הסוכן לא עונה בקבוצות
   if (jid.endsWith("@broadcast")) return;
+  if (jid.endsWith("@newsletter")) return;     // ערוצי וואטסאפ (Channels) — לא לטפל בהם כלל
 
   const isOwner = OWNER && jid.startsWith(OWNER);
 
