@@ -1,7 +1,7 @@
 import { SYSTEM_PROMPT } from "./prompt.js";
 
-const API_KEY = process.env.ANTHROPIC_API_KEY;
-const MODEL = process.env.MODEL || "claude-sonnet-4-6";
+const API_KEY = process.env.OPENAI_API_KEY;
+const MODEL = process.env.MODEL || "gpt-4o-mini";
 
 // זיכרון שיחה בזיכרון התהליך: 10 הודעות אחרונות לכל פונה, פג אחרי 48 שעות.
 const chats = new Map();
@@ -56,29 +56,50 @@ export function recentActivity() {
   };
 }
 
+// ── קריאה ל-OpenAI (Chat Completions) ──
+async function callOpenAI(systemPrompt, messages, { retries = 1 } = {}) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      const res = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${API_KEY}`
+        },
+        body: JSON.stringify({
+          model: MODEL,
+          max_tokens: 600,
+          temperature: 0.7,
+          messages: [{ role: "system", content: systemPrompt }, ...messages]
+        })
+      });
+
+      if (!res.ok) {
+        const body = await res.text();
+        throw new Error(`HTTP ${res.status}: ${body.slice(0, 300)}`);
+      }
+
+      const data = await res.json();
+      const text = (data.choices?.[0]?.message?.content || "").trim();
+      if (text) return text;
+      throw new Error("empty response");
+    } catch (err) {
+      lastError = err;
+      console.error(`[brain] ניסיון ${attempt} נכשל:`, err.message);
+      if (attempt < retries) await new Promise(r => setTimeout(r, attempt * 1500));
+    }
+  }
+  throw lastError || new Error("openai failed");
+}
+
 /** שיחה עם קטי עצמה — פרומפט אחר, בלי הסמנים של הלידים */
 export async function thinkAsOwner(jid, userText, systemPrompt, context) {
   const chat = getChat(jid);
   const messages = [...chat.history, { role: "user", content: userText }];
 
   try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": API_KEY,
-        "anthropic-version": "2023-06-01"
-      },
-      body: JSON.stringify({
-        model: MODEL,
-        max_tokens: 1000,
-        system: systemPrompt + "\n\n" + context,
-        messages
-      })
-    });
-    if (!res.ok) throw new Error("HTTP " + res.status);
-    const data = await res.json();
-    const reply = (data.content || []).filter(b => b.type === "text").map(b => b.text).join("").trim();
+    const reply = await callOpenAI(systemPrompt + "\n\n" + context, messages, { retries: 2 });
 
     chat.history.push({ role: "user", content: userText });
     chat.history.push({ role: "assistant", content: reply });
@@ -88,7 +109,7 @@ export async function thinkAsOwner(jid, userText, systemPrompt, context) {
     return reply || "לא הצלחתי לנסח תשובה, תנסי שוב.";
   } catch (e) {
     console.error("[brain owner]", e.message);
-    return "יש תקלה בחיבור למודל. תנסי שוב בעוד רגע.";
+    return "רגע, לא הצלחתי להשלים את זה. תנסי שוב בעוד רגע 🙏";
   }
 }
 
@@ -105,51 +126,13 @@ export async function think(jid, userText) {
   ];
 
   let raw = "";
-  let lastError = null;
-
-  // עד שלושה ניסיונות, עם המתנה גדלה — מכסה תקלות רשת ועומס זמני
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    try {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-api-key": API_KEY,
-          "anthropic-version": "2023-06-01"
-        },
-        body: JSON.stringify({
-          model: MODEL,
-          max_tokens: 1000,
-          system: SYSTEM_PROMPT,
-          messages
-        })
-      });
-
-      if (!res.ok) {
-        const body = await res.text();
-        throw new Error(`HTTP ${res.status}: ${body.slice(0, 300)}`);
-      }
-
-      const data = await res.json();
-      raw = (data.content || [])
-        .filter(b => b.type === "text")
-        .map(b => b.text)
-        .join("")
-        .trim();
-
-      if (raw) break;
-      throw new Error("empty response");
-    } catch (err) {
-      lastError = err;
-      console.error(`[brain] ניסיון ${attempt} נכשל:`, err.message);
-      if (attempt < 3) await new Promise(r => setTimeout(r, attempt * 1500));
-    }
-  }
-
-  if (!raw) {
-    console.error("[brain] כל הניסיונות נכשלו:", lastError?.message);
+  try {
+    // עד שלושה ניסיונות, עם המתנה גדלה — מכסה תקלות רשת ועומס זמני
+    raw = await callOpenAI(SYSTEM_PROMPT, messages, { retries: 3 });
+  } catch (err) {
+    console.error("[brain] כל הניסיונות נכשלו:", err?.message);
     return {
-      reply: "קיבלתי את ההודעה שלך 🙏 יש אצלנו תקלה טכנית קטנה ברגע זה — קטי תחזור אלייך אישית בהקדם.",
+      reply: "היי, קיבלתי את ההודעה שלך 💛 אני מעבירה לקטי והיא תחזור אלייך אישית ממש בקרוב.",
       ended: false, alert: true, human: true, infoCard: false
     };
   }

@@ -31,6 +31,20 @@ export const state = {
 let sock = null;
 let reconnectAttempts = 0;
 
+// אנשי קשר שמורים בטלפון (יש להם שם שמור באנשי הקשר). לפי בקשת קטי,
+// הבוט עונה רק למי שלא שמור (לידים/אנשים חדשים) ולא לאנשי הקשר המוכרים.
+const savedContacts = new Set();
+// אפשר לכבות את הסינון ע"י ONLY_NON_CONTACTS=false בהגדרות הסביבה.
+const ONLY_NON_CONTACTS = (process.env.ONLY_NON_CONTACTS || "true") !== "false";
+
+function registerContacts(contacts) {
+  if (!Array.isArray(contacts)) return;
+  for (const c of contacts) {
+    // רק איש קשר עם שם שמור בפנקס הכתובות ("name"). לליד לא מוכר יש רק "notify".
+    if (c?.id && c.name) savedContacts.add(c.id);
+  }
+}
+
 const log = pino({ level: "warn" });
 
 function shortDelay(text) {
@@ -52,6 +66,12 @@ export async function start() {
   });
 
   sock.ev.on("creds.update", saveCreds);
+
+  // בניית רשימת אנשי הקשר השמורים מהסנכרון של וואטסאפ.
+  sock.ev.on("contacts.set", ({ contacts }) => registerContacts(contacts));
+  sock.ev.on("contacts.upsert", (contacts) => registerContacts(contacts));
+  sock.ev.on("contacts.update", (contacts) => registerContacts(contacts));
+  sock.ev.on("messaging-history.set", ({ contacts }) => registerContacts(contacts));
 
   sock.ev.on("connection.update", async (u) => {
     const { connection, lastDisconnect, qr } = u;
@@ -159,6 +179,12 @@ async function handleMessage(m) {
   }
 
   // ===== מכאן: פונה רגילה =====
+  // עונים רק למי שלא שמור באנשי הקשר (ליד/אדם חדש). איש קשר מוכר — מדלגים.
+  if (ONLY_NON_CONTACTS && savedContacts.has(jid)) {
+    console.log("[wa] איש קשר שמור — מדלג:", jid);
+    return;
+  }
+
   if (isGloballyPaused()) {
     console.log("[wa] הסוכן מושהה גלובלית, מדלג");
     return;
