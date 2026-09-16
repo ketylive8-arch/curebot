@@ -1,4 +1,47 @@
-import { SYSTEM_PROMPT } from "./prompt.js";
+import { SYSTEM_PROMPT, CALENDLY } from "./prompt.js";
+
+// ── מוח מקומי (fallback) — עונה בשיטת CureMindset גם כש-OpenAI לא זמין/אין קרדיט.
+// מזהה את סוג הפנייה לפי מילות מפתח ומחזיר תשובה חמה שמובילה לפגישה.
+function localReply(userText) {
+  const t = (userText || "").toLowerCase();
+  const has = (...words) => words.some(w => t.includes(w));
+  const invite = `\n\nבא לך שנתאם שיחת היכרות קצרה עם קטי, בלי התחייבות? אפשר לבחור זמן שנוח לך כאן:\n${CALENDLY}`;
+
+  // בטיחות — מצוקה
+  if (has("אובדנ", "לפגוע בעצמי", "לא רוצה לחיות", "להתאבד", "פגיעה עצמית")) {
+    return { reply: "אני ממש שמחה שכתבת, ואני רוצה שתדעי שאת לא לבד 💛 מה שאת מרגישה חשוב, וקטי תחזור אלייך אישית בהקדם. אם זה דחוף או קשה מאוד ברגע זה — יש קו תמיכה חם וזמין 24/7, ער\"ן בטלפון 1201. את יקרה וחשובה.", ended: false, alert: true, human: true, infoCard: false };
+  }
+  // בקשה לדבר עם אדם
+  if (has("לדבר עם קטי", "בן אדם", "בנאדם", "אנושי", "לדבר עם מישהו", "נציג")) {
+    return { reply: "בטח 💛 אני מעבירה לקטי והיא תחזור אלייך אישית בהקדם.", ended: false, alert: false, human: true, infoCard: false };
+  }
+  // מחיר
+  if (has("מחיר", "כמה עולה", "עלות", "תשלום", "כמה זה")) {
+    return { reply: "שאלה חשובה 🙏 המחיר מותאם אישית לפי מה שנכון עבורך, וקטי עוברת על זה יחד איתך בשיחת ההיכרות (ללא עלות)." + invite, ended: false, alert: false, human: false, infoCard: false };
+  }
+  // הורה / ילד / נוער
+  if (has("בן שלי", "בת שלי", "הילד", "הילדה", "נוער", "מתבגר", "מתבגרת", "בית ספר", "ילדים")) {
+    return { reply: "אני שומעת כמה חשוב לך לעזור לו/ה — זה אומר עלייך המון 💛 קשיים כאלה בגיל הזה זה מקום שאפשר בהחלט לעבוד איתו, אישית או בקבוצות החוסן לנוער. קטי תתאים את הדרך הנכונה בעדינות ובקצב שלו/ה." + invite, ended: false, alert: false, human: false, infoCard: false };
+  }
+  // כאבים / מיגרנה
+  if (has("כאב", "מיגרנ", "כאבים", "ראש")) {
+    return { reply: "אני שומעת אותך 💛 לגוף יש לא פעם שפה רגשית, ובשיטה עובדים על השורש הרגשי שמשפיע גם על הגוף (בלי להחליף מעקב רפואי). רבים חווים הקלה כשנוגעים ברגש שמאחורי התסמין." + invite, ended: false, alert: false, human: false, infoCard: false };
+  }
+  // מסכים / התמכרות
+  if (has("מסך", "מסכים", "טלפון", "התמכר", "משחקים")) {
+    return { reply: "מובן לגמרי, וזה בסדר להתחיל ממך 💛 לרוב מאחורי המסך מסתתר ויסות רגשי שחסר — וכשמחזקים את החוסן הרגשי, הצורך לברוח פוחת." + invite, ended: false, alert: false, human: false, infoCard: false };
+  }
+  // חרדה / לחץ / תקיעות
+  if (has("חרד", "לחץ", "פאניק", "מתח", "תקוע", "דיכא", "עצב", "ביטחון", "דימוי")) {
+    return { reply: "אני שומעת אותך, וזה אמיץ לכתוב את זה 💛 מה שאת מתארת הוא דפוס שאפשר לרכך — הוא לא גזירת גורל. הדרך של קטי עובדת בדיוק על השורש, לא רק להרגיע לרגע." + invite, ended: false, alert: false, human: false, infoCard: false };
+  }
+  // מה השיטה / מה את עושה / מה מעבירה
+  if (has("שיטה", "מה את עוש", "מה את מעביר", "מה זה", "פעילות", "סדנ", "חינוך", "טיפול", "אימון")) {
+    return { reply: "בשמחה 💛 CureMindset היא עבודה רגשית שבונה חוסן — טיפול ואימון מבוססי NLP שעובדים על השורש של הדפוס, בתהליך קצר וממוקד שמחזק דימוי עצמי וביטחון. \"החופש להוביל. העוצמה להגשים.\"" + invite, ended: false, alert: false, human: false, infoCard: false };
+  }
+  // ברירת מחדל / ברכה
+  return { reply: "היי, כמה טוב שכתבת 💛 אני כאן בשבילך. ספרי לי בכמה מילים מה מביא אותך — משהו שאת מרגישה בעצמך, או עבור מישהו קרוב?", ended: false, alert: false, human: false, infoCard: false };
+}
 
 const API_KEY = process.env.OPENAI_API_KEY;
 const MODEL = process.env.MODEL || "gpt-4o-mini";
@@ -130,12 +173,14 @@ export async function think(jid, userText) {
     // עד שלושה ניסיונות, עם המתנה גדלה — מכסה תקלות רשת ועומס זמני
     raw = await callOpenAI(SYSTEM_PROMPT, messages, { retries: 3 });
   } catch (err) {
-    console.error("[brain] כל הניסיונות נכשלו:", err?.message);
-    // כישלון זמני של ה-AI — עונים בעדינות אבל לא משהים את השיחה ולא שולחים התראה.
-    return {
-      reply: "היי, קיבלתי את ההודעה שלך 💛 אני כאן — ספרי לי, מה מביא אותך?",
-      ended: false, alert: false, human: false, infoCard: false
-    };
+    console.error("[brain] OpenAI נכשל:", err?.message, "→ עונה במוח המקומי (CureMindset)");
+    // מוח מקומי: עונה תשובה אמיתית וחמה גם בלי OpenAI, ושומר בהיסטוריית השיחה.
+    const local = localReply(userText);
+    chat.history.push({ role: "user", content: userText });
+    chat.history.push({ role: "assistant", content: local.reply });
+    if (chat.history.length > MAX_TURNS * 2) chat.history = chat.history.slice(-MAX_TURNS * 2);
+    chat.updated = Date.now();
+    return local;
   }
 
   const ended = raw.includes("[[END]]");
