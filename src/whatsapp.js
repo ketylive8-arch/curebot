@@ -34,8 +34,9 @@ let reconnectAttempts = 0;
 // אנשי קשר שמורים בטלפון (יש להם שם שמור באנשי הקשר). לפי בקשת קטי,
 // הבוט עונה רק למי שלא שמור (לידים/אנשים חדשים) ולא לאנשי הקשר המוכרים.
 const savedContacts = new Set();
-// אפשר לכבות את הסינון ע"י ONLY_NON_CONTACTS=false בהגדרות הסביבה.
-const ONLY_NON_CONTACTS = (process.env.ONLY_NON_CONTACTS || "true") !== "false";
+// ברירת מחדל: עונים לכולם (כדי שאף ליד לא ייפול). אפשר להדליק סינון אנשי קשר
+// ע"י ONLY_NON_CONTACTS=true בהגדרות הסביבה.
+const ONLY_NON_CONTACTS = (process.env.ONLY_NON_CONTACTS || "false") === "true";
 
 function registerContacts(contacts) {
   if (!Array.isArray(contacts)) return;
@@ -126,6 +127,23 @@ export async function start() {
   return sock;
 }
 
+// שולח הודעה בצורה עמידה: קודם לכתובת הטלפון האמיתית (senderPn), ואם נכשל —
+// מנסה שוב לכתובת המקורית. כך תשובה מגיעה גם כשהפונה מזוהה כ-@lid.
+async function safeSend(primaryJid, altJid, payload) {
+  const targets = [...new Set([primaryJid, altJid].filter(Boolean))];
+  let lastErr = null;
+  for (const t of targets) {
+    try {
+      await sock.sendMessage(t, payload);
+      return t;
+    } catch (e) {
+      lastErr = e;
+      console.error(`[wa] שליחה ל-${t} נכשלה: ${e.message}`);
+    }
+  }
+  throw lastErr || new Error("send failed");
+}
+
 async function handleMessage(m) {
   const jid = m.key?.remoteJid;
   if (!jid) return;
@@ -136,7 +154,15 @@ async function handleMessage(m) {
   if (jid.endsWith("@broadcast")) return;
   if (jid.endsWith("@newsletter")) return;     // ערוצי וואטסאפ (Channels) — לא לטפל בהם כלל
 
-  const isOwner = OWNER && jid.startsWith(OWNER);
+  // וואטסאפ עברה לכתובות מסוג @lid (מזהה פרטיות) במקום מספר טלפון.
+  // כתובת הטלפון האמיתית מגיעה ב-senderPn. שולחים ומזהים לפיה — אחרת
+  // התשובה נשלחת ל-@lid ולא תמיד מגיעה, וזיהוי הבעלים/אנשי הקשר נכשל.
+  const senderPn = m.key?.senderPn || null;          // 972...@s.whatsapp.net
+  const replyJid = jid.endsWith("@lid") && senderPn ? senderPn : jid;
+  // מזהה טלפון לזיהוי הבעלים ולסינון אנשי קשר — רק מכתובת טלפון אמיתית.
+  const pnSource = senderPn || (jid.endsWith("@s.whatsapp.net") ? jid : "");
+  const phoneDigits = pnSource ? pnSource.split("@")[0].replace(/\D/g, "") : "";
+  const isOwner = OWNER && phoneDigits === OWNER;
 
   // חלק מההודעות עטופות (הודעות נעלמות/ephemeral, view-once, מסמך עם כיתוב).
   // מחלצים את התוכן הפנימי, אחרת הטקסט מגיע ריק והבוט מדלג על ההודעה.
@@ -159,14 +185,14 @@ async function handleMessage(m) {
   const audio = content.audioMessage;
 
   // רישום אבחון: כל הודעה פרטית שנכנסת (לא קבוצה/ערוץ)
-  console.log(`[wa] 📩 DM מ-${jid} | owner:${!!isOwner} | audio:${!!audio} | טקסט:"${(text || "").slice(0, 60)}"`);
+  console.log(`[wa] 📩 DM מ-${jid} | pn:${phoneDigits || "-"} | owner:${!!isOwner} | audio:${!!audio} | טקסט:"${(text || "").slice(0, 60)}"`);
   if (!text.trim() && audio) {
     await sock.readMessages([m.key]);
-    await sock.sendPresenceUpdate("composing", jid);
+    await sock.sendPresenceUpdate("composing", replyJid);
 
     const spoken = await transcribe(m, log);
     if (!spoken) {
-      await sock.sendMessage(jid, {
+      await safeSend(replyJid, jid, {
         text: isOwner
           ? "לא הצלחתי לתמלל את ההקלטה. תנסי שוב, או תכתבי לי."
           : "לא הצלחתי לשמוע את ההקלטה 🙏 אפשר לכתוב לי במקום?"
@@ -182,21 +208,22 @@ async function handleMessage(m) {
   // ===== מצב בעלים: קטי מדברת עם הסוכן =====
   if (isOwner) {
     await sock.readMessages([m.key]);
-    await sock.sendPresenceUpdate("composing", jid);
+    await sock.sendPresenceUpdate("composing", replyJid);
 
     const cmd = await handleCommand(text.trim(), sock);
     const reply = cmd !== null
       ? cmd
       : await thinkAsOwner(jid, text.trim(), OWNER_SYSTEM, ownerContext());
 
-    await sock.sendPresenceUpdate("paused", jid);
-    await sock.sendMessage(jid, { text: reply });
+    await sock.sendPresenceUpdate("paused", replyJid);
+    await safeSend(replyJid, jid, { text: reply });
     return;
   }
 
   // ===== מכאן: פונה רגילה =====
   // עונים רק למי שלא שמור באנשי הקשר (ליד/אדם חדש). איש קשר מוכר — מדלגים.
-  if (ONLY_NON_CONTACTS && savedContacts.has(jid)) {
+  // בודקים גם את כתובת ה-@lid וגם את כתובת הטלפון, כדי לא לפספס אף כיוון.
+  if (ONLY_NON_CONTACTS && (savedContacts.has(jid) || (replyJid !== jid && savedContacts.has(replyJid)))) {
     console.log("[wa] איש קשר שמור — מדלג:", jid);
     return;
   }
@@ -206,40 +233,43 @@ async function handleMessage(m) {
     return;
   }
 
+  // מפתח שיחה יציב לזיכרון וההשהיות: כתובת הטלפון אם קיימת, אחרת ה-jid.
+  const convKey = replyJid;
+
   // אם קטי לקחה את השיחה ידנית, הסוכן שותק
-  if (isPaused(jid)) {
-    console.log("[wa] שיחה מושהית, מדלג:", jid);
+  if (isPaused(convKey)) {
+    console.log("[wa] שיחה מושהית, מדלג:", convKey);
     return;
   }
 
   await sock.readMessages([m.key]);
-  await sock.sendPresenceUpdate("composing", jid);
+  await sock.sendPresenceUpdate("composing", replyJid);
 
-  const out = await think(jid, text.trim());
+  const out = await think(convKey, text.trim());
 
   await new Promise(r => setTimeout(r, shortDelay(out.reply)));
-  await sock.sendPresenceUpdate("paused", jid);
+  await sock.sendPresenceUpdate("paused", replyJid);
 
-  await sock.sendMessage(jid, { text: out.reply });
-  console.log("[wa] ✅ נשלחה תשובה ל:", jid);
+  const sentTo = await safeSend(replyJid, jid, { text: out.reply });
+  console.log("[wa] ✅ נשלחה תשובה ל:", sentTo);
   state.handled++;
   countHandled();
 
   if (out.infoCard) {
     await new Promise(r => setTimeout(r, 1200));
-    await sock.sendMessage(jid, { text: INFO_CARD });
+    await safeSend(replyJid, jid, { text: INFO_CARD });
   }
 
-  if (out.human) pause(jid, 12);
+  if (out.human) pause(convKey, 12);
 
   // התראה לקטי על מצוקה או בקשה לאדם
   if (out.alert || out.human) {
-    flag(jid.split("@")[0], text.trim(), out.alert);
+    flag(phoneDigits || jid.split("@")[0], text.trim(), out.alert);
   }
 
   if ((out.alert || out.human) && OWNER) {
     const tag = out.alert ? "🔴 מצוקה — דורש התייחסות אישית" : "🟡 ביקשו לדבר איתך";
-    const from = jid.split("@")[0];
+    const from = phoneDigits || jid.split("@")[0];
     const note =
       `${tag}\n` +
       `מ: ${from}\n\n` +
