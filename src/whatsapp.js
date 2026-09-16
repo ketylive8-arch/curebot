@@ -138,16 +138,28 @@ async function handleMessage(m) {
 
   const isOwner = OWNER && jid.startsWith(OWNER);
 
+  // חלק מההודעות עטופות (הודעות נעלמות/ephemeral, view-once, מסמך עם כיתוב).
+  // מחלצים את התוכן הפנימי, אחרת הטקסט מגיע ריק והבוט מדלג על ההודעה.
+  const content =
+    m.message?.ephemeralMessage?.message ||
+    m.message?.viewOnceMessage?.message ||
+    m.message?.viewOnceMessageV2?.message ||
+    m.message?.viewOnceMessageV2Extension?.message ||
+    m.message?.documentWithCaptionMessage?.message ||
+    m.message || {};
+
   let text =
-    m.message?.conversation ||
-    m.message?.extendedTextMessage?.text ||
+    content.conversation ||
+    content.extendedTextMessage?.text ||
+    content.imageMessage?.caption ||
+    content.videoMessage?.caption ||
     "";
 
-  // רישום אבחון: כל הודעה פרטית שנכנסת (לא קבוצה/ערוץ)
-  console.log(`[wa] 📩 DM מ-${jid} | owner:${!!isOwner} | audio:${!!m.message?.audioMessage} | טקסט:"${(text || "").slice(0, 60)}"`);
-
   // ===== הודעה קולית =====
-  const audio = m.message?.audioMessage;
+  const audio = content.audioMessage;
+
+  // רישום אבחון: כל הודעה פרטית שנכנסת (לא קבוצה/ערוץ)
+  console.log(`[wa] 📩 DM מ-${jid} | owner:${!!isOwner} | audio:${!!audio} | טקסט:"${(text || "").slice(0, 60)}"`);
   if (!text.trim() && audio) {
     await sock.readMessages([m.key]);
     await sock.sendPresenceUpdate("composing", jid);
