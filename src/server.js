@@ -1,22 +1,45 @@
 import express from "express";
 import { start, state, logout } from "./whatsapp.js";
 import { stats } from "./brain.js";
+import { mountCloud, cloudState } from "./cloud.js";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const PANEL_KEY = process.env.PANEL_KEY || "";
 
-// הגנה בסיסית: אם הוגדר PANEL_KEY, צריך להוסיף ?key=... לכתובת
+// בוחרים ערוץ: אם מוגדרים טוקן+מספר של WhatsApp Cloud API — עוברים אליו
+// (יציב, בלי QR ובלי ניתוקים, כמו Base44). אחרת נשארים על Baileys כברירת מחדל.
+const USE_CLOUD = cloudState.configured;
+
+// קורא גוף JSON — נחוץ ל-webhook של Meta.
+app.use(express.json({ limit: "2mb" }));
+
+// הגנה בסיסית: אם הוגדר PANEL_KEY, צריך להוסיף ?key=... לכתובת.
+// נתיבי /health ו-/webhook (של Meta) פתוחים תמיד.
 app.use((req, res, next) => {
-  if (!PANEL_KEY || req.path === "/health") return next();
+  if (!PANEL_KEY || req.path === "/health" || req.path === "/webhook") return next();
   if (req.query.key === PANEL_KEY) return next();
   res.status(403).send("Forbidden");
 });
 
-app.get("/health", (_req, res) => res.json({ ok: true, status: state.status }));
+// מחברים את נתיבי ה-Cloud API (webhook) תמיד — כך אפשר לאמת מול Meta עוד
+// לפני שהערוץ פעיל במלואו. המענה בפועל יעבוד ברגע שהטוקן קיים.
+mountCloud(app);
+
+app.get("/health", (_req, res) => res.json({ ok: true, channel: USE_CLOUD ? "cloud" : "baileys", status: USE_CLOUD ? "cloud" : state.status }));
 
 app.get("/api/status", (_req, res) => {
-  res.json({ ...state, ...stats() });
+  if (USE_CLOUD) {
+    return res.json({
+      status: "connected",
+      channel: "cloud",
+      me: process.env.PHONE_NUMBER_ID || null,
+      lastEvent: "WhatsApp Cloud API פעיל",
+      ...cloudState,
+      ...stats()
+    });
+  }
+  res.json({ ...state, channel: "baileys", ...stats() });
 });
 
 app.post("/api/logout", async (_req, res) => {
@@ -81,9 +104,13 @@ async function tick(){
 tick();setInterval(tick,3000);
 </script></body></html>`;
 
-app.listen(PORT, () => console.log(`[server] פועל על פורט ${PORT}`));
+app.listen(PORT, () => console.log(`[server] פועל על פורט ${PORT} | ערוץ: ${USE_CLOUD ? "WhatsApp Cloud API" : "Baileys"}`));
 
-start().catch(e => {
-  console.error("[server] כשל בהפעלת וואטסאפ:", e.message);
-  state.lastEvent = "כשל בהפעלה: " + e.message;
-});
+if (USE_CLOUD) {
+  console.log("[server] ערוץ Cloud API פעיל — Baileys כבוי. אין צורך בסריקת QR.");
+} else {
+  start().catch(e => {
+    console.error("[server] כשל בהפעלת וואטסאפ:", e.message);
+    state.lastEvent = "כשל בהפעלה: " + e.message;
+  });
+}
