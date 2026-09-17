@@ -30,6 +30,11 @@ export const state = {
 
 let sock = null;
 let reconnectAttempts = 0;
+let selfTestSent = false;   // שולחים הודעת בדיקה פעם אחת בלבד לכל הרצה
+
+// מספר לבדיקת מסירה: הבוט שולח אליו הודעת "אני חי" ברגע שמתחבר.
+// מוגדר ע"י SELFTEST_TO=9725XXXXXXXX (בלי +). ריק = כבוי.
+const SELFTEST_TO = (process.env.SELFTEST_TO || "").replace(/\D/g, "");
 
 // אנשי קשר שמורים בטלפון (יש להם שם שמור באנשי הקשר). לפי בקשת קטי,
 // הבוט עונה רק למי שלא שמור (לידים/אנשים חדשים) ולא לאנשי הקשר המוכרים.
@@ -91,6 +96,25 @@ export async function start() {
       state.lastEvent = "מחובר";
       reconnectAttempts = 0;
       console.log("[wa] מחובר כ-", state.me);
+
+      // בדיקת מסירה חד-פעמית: שולח הודעה אמיתית למספר SELFTEST_TO כדי
+      // להוכיח שהבוט מסוגל לשלוח ושהודעות מגיעות בפועל.
+      if (SELFTEST_TO && !selfTestSent) {
+        selfTestSent = true;
+        const to = `${SELFTEST_TO}@s.whatsapp.net`;
+        const msg =
+          "🌿 CureBot מחובר ופעיל!\n" +
+          "זו הודעת בדיקה אוטומטית מהסוכן של קטי שגב — אם קיבלת אותה, המסירה עובדת. 💛\n" +
+          `(${new Date().toLocaleString("he-IL", { timeZone: "Asia/Jerusalem" })})`;
+        setTimeout(async () => {
+          try {
+            await sock.sendMessage(to, { text: msg });
+            console.log("[wa] ✅ הודעת בדיקה נשלחה ל-", SELFTEST_TO);
+          } catch (e) {
+            console.error("[wa] ❌ הודעת בדיקה נכשלה:", e.message);
+          }
+        }, 4000);
+      }
     }
 
     if (connection === "close") {
