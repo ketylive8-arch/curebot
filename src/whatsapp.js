@@ -39,9 +39,15 @@ const SELFTEST_TO = (process.env.SELFTEST_TO || "").replace(/\D/g, "");
 // אנשי קשר שמורים בטלפון (יש להם שם שמור באנשי הקשר). לפי בקשת קטי,
 // הבוט עונה רק למי שלא שמור (לידים/אנשים חדשים) ולא לאנשי הקשר המוכרים.
 const savedContacts = new Set();
-// ברירת מחדל: עונים לכולם (כדי שאף ליד לא ייפול). אפשר להדליק סינון אנשי קשר
-// ע"י ONLY_NON_CONTACTS=true בהגדרות הסביבה.
-const ONLY_NON_CONTACTS = (process.env.ONLY_NON_CONTACTS || "false") === "true";
+// ברירת מחדל: עונים רק למי שלא שמור באנשי הקשר (לידים חדשים).
+// אפשר לכבות ע"י ONLY_NON_CONTACTS=false.
+const ONLY_NON_CONTACTS = (process.env.ONLY_NON_CONTACTS || "true") !== "false";
+
+// רשימת חסימה: מספרים שהבוט לעולם לא עונה להם — סוכני אוטומציה/בוטים אחרים
+// (למשל Base44) ששולחים דוחות סטטוס, ולא לידים. מוגדר ב-BLOCKLIST, מופרד בפסיקים.
+const BLOCKLIST = new Set(
+  (process.env.BLOCKLIST || "").split(",").map(s => s.replace(/\D/g, "")).filter(Boolean)
+);
 
 function registerContacts(contacts) {
   if (!Array.isArray(contacts)) return;
@@ -245,6 +251,12 @@ async function handleMessage(m) {
   }
 
   // ===== מכאן: פונה רגילה =====
+  // רשימת חסימה: לא עונים לסוכני אוטומציה/בוטים אחרים (Base44 וכו').
+  if (phoneDigits && BLOCKLIST.has(phoneDigits)) {
+    console.log("[wa] מספר חסום (אוטומציה) — מדלג:", phoneDigits);
+    return;
+  }
+
   // עונים רק למי שלא שמור באנשי הקשר (ליד/אדם חדש). איש קשר מוכר — מדלגים.
   // בודקים גם את כתובת ה-@lid וגם את כתובת הטלפון, כדי לא לפספס אף כיוון.
   if (ONLY_NON_CONTACTS && (savedContacts.has(jid) || (replyJid !== jid && savedContacts.has(replyJid)))) {
