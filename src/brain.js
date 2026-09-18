@@ -189,6 +189,27 @@ export function recentActivity() {
   };
 }
 
+// ── אבחון OpenAI: בודק לאיזה ארגון/פרויקט שייך המפתח והאם יש קרדיט.
+// רץ פעם אחת בעליית השרת, ומדפיס ללוג תמונה מדויקת כדי לאתר את בעיית הקרדיט.
+export async function diagnoseOpenAI() {
+  if (!API_KEY) { console.log("[diag] ⚠️ אין OPENAI_API_KEY מוגדר"); return; }
+  console.log(`[diag] מפתח OpenAI מוגדר (מסתיים ב-...${API_KEY.slice(-4)}), מודל:${MODEL}`);
+  try {
+    const r = await fetch("https://api.openai.com/v1/models", { headers: { Authorization: `Bearer ${API_KEY}` } });
+    console.log(`[diag] models: HTTP ${r.status} | org:${r.headers.get("openai-organization")} | project:${r.headers.get("openai-project")}`);
+  } catch (e) { console.log("[diag] models שגיאה:", e.message); }
+  try {
+    const r = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ model: MODEL, max_tokens: 1, messages: [{ role: "user", content: "hi" }] })
+    });
+    const b = await r.text();
+    if (r.ok) console.log("[diag] ✅ בדיקת שיחה הצליחה — יש קרדיט, OpenAI פעיל!");
+    else console.log(`[diag] ❌ בדיקת שיחה נכשלה: HTTP ${r.status} | ${b.slice(0, 220)}`);
+  } catch (e) { console.log("[diag] completion שגיאה:", e.message); }
+}
+
 // ── קריאה ל-OpenAI (Chat Completions) ──
 async function callOpenAI(systemPrompt, messages, { retries = 1 } = {}) {
   let lastError = null;

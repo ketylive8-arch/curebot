@@ -49,6 +49,12 @@ const BLOCKLIST = new Set(
   (process.env.BLOCKLIST || "").split(",").map(s => s.replace(/\D/g, "")).filter(Boolean)
 );
 
+// רשימת היתר: מספרים שהבוט תמיד עונה להם — גם אם הם שמורים באנשי הקשר.
+// שימושי לבדיקות (למשל המספר האישי השני של קטי). מוגדר ב-ALLOWLIST.
+const ALLOWLIST = new Set(
+  (process.env.ALLOWLIST || "").split(",").map(s => s.replace(/\D/g, "")).filter(Boolean)
+);
+
 function registerContacts(contacts) {
   if (!Array.isArray(contacts)) return;
   for (const c of contacts) {
@@ -257,9 +263,10 @@ async function handleMessage(m) {
     return;
   }
 
-  // עונים רק למי שלא שמור באנשי הקשר (ליד/אדם חדש). איש קשר מוכר — מדלגים.
-  // בודקים גם את כתובת ה-@lid וגם את כתובת הטלפון, כדי לא לפספס אף כיוון.
-  if (ONLY_NON_CONTACTS && (savedContacts.has(jid) || (replyJid !== jid && savedContacts.has(replyJid)))) {
+  // עונים רק למי שלא שמור באנשי הקשר (ליד/אדם חדש). איש קשר מוכר — מדלגים,
+  // אלא אם המספר ברשימת ההיתר (ALLOWLIST) — אז עונים תמיד (למשל לבדיקות).
+  const allowed = phoneDigits && ALLOWLIST.has(phoneDigits);
+  if (!allowed && ONLY_NON_CONTACTS && (savedContacts.has(jid) || (replyJid !== jid && savedContacts.has(replyJid)))) {
     console.log("[wa] איש קשר שמור — מדלג:", jid);
     return;
   }
@@ -291,10 +298,8 @@ async function handleMessage(m) {
   state.handled++;
   countHandled();
 
-  if (out.infoCard) {
-    await new Promise(r => setTimeout(r, 1200));
-    await safeSend(replyJid, jid, { text: INFO_CARD });
-  }
+  // כרטיס המידע כבר לא נשלח כהודעה נפרדת — התשובה עצמה כוללת את הקישור,
+  // כדי שלא תישלח "אותה הודעה פעמיים".
 
   if (out.human) pause(convKey, 12);
 

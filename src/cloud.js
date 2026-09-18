@@ -114,10 +114,7 @@ async function handleInbound(msg, contactName) {
   cloudState.handled++;
   countHandled();
 
-  if (out.infoCard) {
-    await new Promise(r => setTimeout(r, 900));
-    await graphSend(from, INFO_CARD);
-  }
+  // כרטיס המידע לא נשלח כהודעה נפרדת — הקישור כבר בתוך התשובה.
 
   if (out.human) pause(from, 12);
   if (out.alert || out.human) flag(from, text.trim(), out.alert);

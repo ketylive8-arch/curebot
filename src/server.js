@@ -1,6 +1,6 @@
 import express from "express";
 import { start, state, logout } from "./whatsapp.js";
-import { stats } from "./brain.js";
+import { stats, diagnoseOpenAI } from "./brain.js";
 import { mountCloud, cloudState } from "./cloud.js";
 
 const app = express();
@@ -105,6 +105,9 @@ tick();setInterval(tick,3000);
 </script></body></html>`;
 
 app.listen(PORT, () => console.log(`[server] פועל על פורט ${PORT} | ערוץ: ${USE_CLOUD ? "WhatsApp Cloud API" : "Baileys"}`));
+
+// אבחון OpenAI פעם אחת בעלייה — מדפיס ללוג אם יש קרדיט ולאיזה ארגון שייך המפתח.
+diagnoseOpenAI().catch(() => {});
 
 if (USE_CLOUD) {
   console.log("[server] ערוץ Cloud API פעיל — Baileys כבוי. אין צורך בסריקת QR.");
