@@ -210,18 +210,38 @@ async function handleMessage(m) {
     m.message?.documentWithCaptionMessage?.message ||
     m.message || {};
 
+  // הודעות שנשלחו ממכשיר מקושר עטופות ב-deviceSentMessage.
+  const inner = content.deviceSentMessage?.message || content;
+
   let text =
-    content.conversation ||
-    content.extendedTextMessage?.text ||
-    content.imageMessage?.caption ||
-    content.videoMessage?.caption ||
+    inner.conversation ||
+    inner.extendedTextMessage?.text ||
+    inner.imageMessage?.caption ||
+    inner.videoMessage?.caption ||
+    inner.buttonsResponseMessage?.selectedButtonId ||
+    inner.buttonsResponseMessage?.selectedDisplayText ||
+    inner.templateButtonReplyMessage?.selectedId ||
+    inner.listResponseMessage?.title ||
+    inner.listResponseMessage?.singleSelectReply?.selectedRowId ||
+    inner.interactiveResponseMessage?.nativeFlowResponseMessage?.paramsJson ||
+    inner.ephemeralMessage?.message?.extendedTextMessage?.text ||
+    inner.ephemeralMessage?.message?.conversation ||
     "";
 
   // ===== הודעה קולית =====
-  const audio = content.audioMessage;
+  const audio = inner.audioMessage || content.audioMessage;
 
   // רישום אבחון: כל הודעה פרטית שנכנסת (לא קבוצה/ערוץ)
   console.log(`[wa] 📩 DM מ-${jid} | pn:${phoneDigits || "-"} | owner:${!!isOwner} | audio:${!!audio} | טקסט:"${(text || "").slice(0, 60)}"`);
+
+  // גשש אבחון: אם אין טקסט ואין קול — מדפיסים את מבנה ההודעה כדי לזהות סוג לא-מטופל
+  // או כשל פענוח. עוזר לתקן במדויק במקום לנחש.
+  if (!text.trim() && !audio) {
+    try {
+      const keys = m.message ? Object.keys(m.message).join(",") : "null";
+      console.log(`[wa] ⬛ אין טקסט מ-${jid} | מפתחות:${keys} | גולמי:${JSON.stringify(m.message || {}).slice(0, 500)}`);
+    } catch { /* התעלם */ }
+  }
   if (!text.trim() && audio) {
     await sock.readMessages([m.key]);
     await sock.sendPresenceUpdate("composing", replyJid);
