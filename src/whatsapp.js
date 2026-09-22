@@ -372,3 +372,8 @@ async function handleMessage(m) {
 export async function logout() {
   if (sock) await sock.logout();
 }
+
+// חושף את חיבור הוואטסאפ הפעיל — לשימוש קונסולת הניהול (שליחה יזומה וכו').
+export function getSock() {
+  return sock;
+}

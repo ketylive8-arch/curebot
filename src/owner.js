@@ -82,6 +82,47 @@ export async function handleCommand(text, sock) {
   return null;
 }
 
+/**
+ * מענה ניהולי מקומי (כשאין OpenAI) — עונה לקטי מתוך הנתונים האמיתיים,
+ * בעברית ענייני, ומכוון לפקודות הזמינות. לעולם לא "תקלה טכנית".
+ */
+export function localManageReply(text) {
+  const t = (text || "").toLowerCase().trim();
+  const a = recentActivity();
+  const has = (...w) => w.some(x => t.includes(x));
+
+  if (has("עזרה", "פקודות", "מה אפשר", "help")) {
+    return (
+      "אני העוזר הניהולי שלך 💛 הנה מה שאפשר לבקש:\n" +
+      "• \"סטטוס\" — מצב הסוכן ומספרים\n" +
+      "• \"לידים\" — מי פנה ודורש אותך\n" +
+      "• \"השהה\" / \"המשך\" — לעצור או להפעיל את המענה האוטומטי\n" +
+      "• \"שלח ל0501234567: טקסט\" — לשלוח הודעה יזומה\n" +
+      "• \"אפס שיחה 0501234567\" — להתחיל שיחה מחדש"
+    );
+  }
+  if (has("כמה", "לידים", "פניות", "מצב", "סטטוס", "היום", "מה קורה", "מה המצב")) {
+    return (
+      `${isGloballyPaused() ? "⏸ הסוכן מושהה כרגע." : "▶️ הסוכן פעיל ועונה."}\n` +
+      `שיחות פעילות: ${a.activeChats} · נענו: ${a.handled}\n` +
+      `לידים חמים היום: ${a.hot} · התראות מצוקה: ${a.alerts}` +
+      (a.flagged.length
+        ? `\n\nממתינים לך:\n` + a.flagged.slice(0, 5).map(f => `${f.alert ? "🔴" : "🟡"} ${f.from} — "${f.text.slice(0, 50)}"`).join("\n")
+        : `\n\nאין כרגע לידים שדורשים התייחסות אישית.`)
+    );
+  }
+  if (has("מצוק", "דחוף", "אדום", "התראות")) {
+    const alerts = a.flagged.filter(f => f.alert);
+    if (!alerts.length) return "אין כרגע התראות מצוקה. 🙏";
+    return "🔴 התראות שדורשות אותך:\n" + alerts.slice(0, 8).map(f => `${f.from} — "${f.text.slice(0, 60)}"`).join("\n");
+  }
+  // ברירת מחדל — מכוון בעדינות
+  return (
+    `אני כאן לנהל איתך את הסוכן 💛 אפשר לשאול "מה המצב היום", "לידים", או לכתוב "עזרה" לכל הפקודות.\n` +
+    `כרגע: ${a.activeChats} שיחות פעילות, ${a.hot} לידים חמים, ${a.alerts} התראות.`
+  );
+}
+
 /** ההקשר שנשלח למודל כשקטי שואלת שאלה חופשית */
 export function ownerContext() {
   const a = recentActivity();
