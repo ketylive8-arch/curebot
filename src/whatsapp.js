@@ -32,6 +32,18 @@ let sock = null;
 let reconnectAttempts = 0;
 let selfTestSent = false;   // שולחים הודעת בדיקה פעם אחת בלבד לכל הרצה
 
+// מאגר הודעות אחרונות (id → תוכן) עבור getMessage — מסייע ל-Baileys לשלוח
+// מחדש הודעות בבקשת retry, ומצמצם הודעות שמגיעות ריקות בגלל כשל פענוח.
+const msgStore = new Map();
+function rememberMessage(m) {
+  try {
+    if (m?.key?.id && m.message) {
+      msgStore.set(m.key.id, m.message);
+      if (msgStore.size > 1000) msgStore.delete(msgStore.keys().next().value);
+    }
+  } catch { /* ignore */ }
+}
+
 // מספר לבדיקת מסירה: הבוט שולח אליו הודעת "אני חי" ברגע שמתחבר.
 // מוגדר ע"י SELFTEST_TO=9725XXXXXXXX (בלי +). ריק = כבוי.
 const SELFTEST_TO = (process.env.SELFTEST_TO || "").replace(/\D/g, "");
@@ -89,7 +101,10 @@ export async function start() {
     logger: log,
     printQRInTerminal: false,
     markOnlineOnConnect: false,   // כדי שלא ייראה שאת מחוברת כל הזמן
-    syncFullHistory: false
+    syncFullHistory: false,
+    // מאפשר ל-Baileys לשלוח מחדש הודעות כשמתקבלת בקשת retry מהצד השני,
+    // וחלק ממנגנון ה-retry על הודעות שלא פוענחו. עוזר לצמצם הודעות ריקות.
+    getMessage: async (key) => (key?.id && msgStore.get(key.id)) || undefined
   });
 
   sock.ev.on("creds.update", saveCreds);
@@ -161,6 +176,7 @@ export async function start() {
     if (type !== "notify") return;
 
     for (const m of messages) {
+      rememberMessage(m);
       try {
         await handleMessage(m);
       } catch (e) {
