@@ -3,6 +3,23 @@ import { start, state, logout } from "./whatsapp.js";
 import { stats, diagnoseOpenAI } from "./brain.js";
 import { mountCloud, cloudState } from "./cloud.js";
 
+// ── יציבות: לעולם לא לתת לתהליך למות משגיאה בודדת. ──
+// Baileys/הצפנת וואטסאפ זורקים לפעמים שגיאות stream/פענוח שהפילו את כל
+// השרת ("Exited with status 1"). תופסים אותן כאן, רושמים וממשיכים —
+// לוגיקת ההתחברות-מחדש כבר מטפלת בשאר. זה מונע את הקריסות ואיבוד ההודעות.
+process.on("uncaughtException", (e) => console.error("[server] ⚠️ uncaughtException:", e?.message || e));
+process.on("unhandledRejection", (e) => console.error("[server] ⚠️ unhandledRejection:", e?.message || e));
+
+// השתקת הצפת לוגים ענקית מ-libsignal (הדפסות של אובייקטי SessionEntry/מפתחות)
+// שמעמיסה על מכונה של 512MB. מסננים רק את הרעש הזה, שאר הלוגים נשמרים.
+const _origLog = console.log.bind(console);
+console.log = (...args) => {
+  const first = typeof args[0] === "string" ? args[0] : "";
+  if (/^(Closing session|Opening session|SessionEntry|\s*(baseKey|remoteIdentityKey|ephemeralKeyPair|rootKey|chainKey|_chains|currentRatchet|indexInfo|pendingPreKey|registrationId|previousCounter)\b)/.test(first)
+      || /<Buffer /.test(first)) return;
+  _origLog(...args);
+};
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 const PANEL_KEY = process.env.PANEL_KEY || "";

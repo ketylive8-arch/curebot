@@ -71,6 +71,15 @@ function shortDelay(text) {
 }
 
 export async function start() {
+  // ניקוי חיבור קודם לפני יצירת חדש — מונע דליפת מאזינים/סוקטים לאורך
+  // התחברויות-מחדש חוזרות (שגורמת בסוף לצריכת זיכרון וקריסה).
+  if (sock) {
+    try { sock.ev.removeAllListeners(); } catch { /* ignore */ }
+    try { sock.ws?.close?.(); } catch { /* ignore */ }
+    try { sock.end?.(undefined); } catch { /* ignore */ }
+    sock = null;
+  }
+
   const { state: auth, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
   const { version } = await fetchLatestBaileysVersion();
 
