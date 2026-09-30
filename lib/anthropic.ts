@@ -2,8 +2,13 @@
 // אם הכול נכשל — זורק, וה-core עונה בהודעת הגיבוי.
 
 import Anthropic from "@anthropic-ai/sdk";
-import { SYSTEM_PROMPT } from "./prompt";
+import { buildSystemPrompt } from "./knowledge";
 import type { ChatMsg } from "./redis";
+
+// הפרומפט + ספריית התוכן — קבוע בין בקשות, לכן מסומן ל-cache (פחות עלות ופחות זמן תגובה).
+const SYSTEM_BLOCKS: Anthropic.TextBlockParam[] = [
+  { type: "text", text: buildSystemPrompt(), cache_control: { type: "ephemeral" } },
+];
 
 const MODEL = process.env.MODEL || "claude-sonnet-4-6";
 
@@ -24,7 +29,7 @@ export async function askClaude(messages: ChatMsg[]): Promise<string> {
       const resp = await client.messages.create({
         model: MODEL,
         max_tokens: 1024,
-        system: SYSTEM_PROMPT,
+        system: SYSTEM_BLOCKS,
         messages: messages.map((m) => ({ role: m.role, content: m.content })),
       });
 
