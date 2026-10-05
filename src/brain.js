@@ -1,4 +1,5 @@
-import { SYSTEM_PROMPT, CALENDLY } from "./prompt.js";
+import { CALENDLY } from "./prompt.js";
+import { LEAD_SYSTEM } from "./agent-prompt.js";
 
 // בוחר וריאציה אקראית — כדי שהתשובות לא יישמעו תבניתיות אלא אנושיות ומגוונות.
 function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
@@ -192,6 +193,13 @@ export function recentActivity() {
 // ── אבחון OpenAI: בודק לאיזה ארגון/פרויקט שייך המפתח והאם יש קרדיט.
 // רץ פעם אחת בעליית השרת, ומדפיס ללוג תמונה מדויקת כדי לאתר את בעיית הקרדיט.
 export async function diagnoseOpenAI() {
+  if (ANTHROPIC_KEY) {
+    try {
+      const t = await callClaude("ענה במילה אחת.", [{ role: "user", content: "שלום" }]);
+      console.log(`[diag] ✅ Claude פעיל (${CLAUDE_MODEL}) — זה המוח שעונה לפונים. תשובת בדיקה: ${t.slice(0, 20)}`);
+    } catch (e) { console.log("[diag] ❌ Claude נכשל:", e.message); }
+    return;
+  }
   if (!API_KEY) { console.log("[diag] ⚠️ אין OPENAI_API_KEY מוגדר"); return; }
   console.log(`[diag] מפתח OpenAI מוגדר (מסתיים ב-...${API_KEY.slice(-4)}), מודל:${MODEL}`);
   try {
@@ -208,6 +216,52 @@ export async function diagnoseOpenAI() {
     if (r.ok) console.log("[diag] ✅ בדיקת שיחה הצליחה — יש קרדיט, OpenAI פעיל!");
     else console.log(`[diag] ❌ בדיקת שיחה נכשלה: HTTP ${r.status} | ${b.slice(0, 220)}`);
   } catch (e) { console.log("[diag] completion שגיאה:", e.message); }
+}
+
+// ── Claude (Anthropic) — המוח הראשי כשיש ANTHROPIC_API_KEY. אותו מוח כמו הסוכן החדש.
+const ANTHROPIC_KEY = process.env.ANTHROPIC_API_KEY;
+const CLAUDE_MODEL = process.env.CLAUDE_MODEL || "claude-sonnet-4-6";
+
+async function callClaude(systemPrompt, messages, { retries = 1 } = {}) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-api-key": ANTHROPIC_KEY,
+          "anthropic-version": "2023-06-01"
+        },
+        body: JSON.stringify({
+          model: CLAUDE_MODEL,
+          max_tokens: 600,
+          system: [{ type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } }],
+          messages
+        })
+      });
+      if (!res.ok) {
+        const body = await res.text();
+        const err = new Error(`HTTP ${res.status}: ${body.slice(0, 300)}`);
+        if (res.status === 400 || res.status === 401 || res.status === 404) attempt = retries;
+        throw err;
+      }
+      const data = await res.json();
+      const text = (data.content || []).filter(b => b.type === "text").map(b => b.text).join("").trim();
+      if (text) return text;
+      throw new Error("empty response");
+    } catch (err) {
+      lastError = err;
+      console.error(`[brain] Claude ניסיון ${attempt} נכשל:`, err.message);
+      if (attempt < retries) await new Promise(r => setTimeout(r, attempt * 700));
+    }
+  }
+  throw lastError || new Error("claude failed");
+}
+
+// בוחר מוח: Claude אם יש מפתח, אחרת OpenAI.
+function callLLM(systemPrompt, messages, opts) {
+  return ANTHROPIC_KEY ? callClaude(systemPrompt, messages, opts) : callOpenAI(systemPrompt, messages, opts);
 }
 
 // ── קריאה ל-OpenAI (Chat Completions) ──
@@ -253,7 +307,7 @@ export async function thinkAsOwner(jid, userText, systemPrompt, context) {
   const messages = [...chat.history, { role: "user", content: userText }];
 
   try {
-    const reply = await callOpenAI(systemPrompt + "\n\n" + context, messages, { retries: 2 });
+    const reply = await callLLM(systemPrompt + "\n\n" + context, messages, { retries: 2 });
 
     chat.history.push({ role: "user", content: userText });
     chat.history.push({ role: "assistant", content: reply });
@@ -282,9 +336,9 @@ export async function think(jid, userText) {
   let raw = "";
   try {
     // עד שלושה ניסיונות, עם המתנה גדלה — מכסה תקלות רשת ועומס זמני
-    raw = await callOpenAI(SYSTEM_PROMPT, messages, { retries: 3 });
+    raw = await callLLM(LEAD_SYSTEM, messages, { retries: 3 });
   } catch (err) {
-    console.error("[brain] OpenAI נכשל:", err?.message, "→ עונה במוח המקומי (CureMindset)");
+    console.error("[brain] המודל נכשל:", err?.message, "→ עונה במוח המקומי (CureMindset)");
     // מוח מקומי: עונה תשובה אמיתית וחמה גם בלי OpenAI, ושומר בהיסטוריית השיחה.
     const local = localReply(userText, chat);
     // כרטיס המידע נשלח פעם אחת בלבד לכל שיחה — שלא יחזור אחרי כל הודעה.
