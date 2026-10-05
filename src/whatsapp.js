@@ -12,6 +12,7 @@ import { Boom } from "@hapi/boom";
 import pino from "pino";
 import QRCode from "qrcode";
 import path from "path";
+import fs from "fs";
 import { think, thinkAsOwner, isPaused, pause, isGloballyPaused, countHandled, flag } from "./brain.js";
 import { INFO_CARD } from "./prompt.js";
 import { transcribe } from "./transcribe.js";
@@ -163,7 +164,11 @@ export async function start() {
       console.log("[wa]", state.lastEvent);
 
       if (loggedOut) {
-        // אין טעם לנסות שוב עם אותם פרטי התחברות
+        // פרטי ההתחברות הישנים כבר לא תקפים: מוחקים אותם ומתחילים מחדש,
+        // כדי שיופיע QR חדש בקונסולה ואפשר יהיה לסרוק בלי לגעת בשרת.
+        try { fs.rmSync(AUTH_DIR, { recursive: true, force: true }); } catch {}
+        reconnectAttempts = 0;
+        setTimeout(() => start().catch(e => console.error("[wa] כשל ביצירת QR חדש:", e.message)), 3000);
         return;
       }
       reconnectAttempts++;
