@@ -198,7 +198,6 @@ export async function diagnoseOpenAI() {
       const t = await callClaude("ענה במילה אחת.", [{ role: "user", content: "שלום" }]);
       console.log(`[diag] ✅ Claude פעיל (${CLAUDE_MODEL}) — זה המוח שעונה לפונים. תשובת בדיקה: ${t.slice(0, 20)}`);
     } catch (e) { console.log("[diag] ❌ Claude נכשל:", e.message); }
-    return;
   }
   if (!API_KEY) { console.log("[diag] ⚠️ אין OPENAI_API_KEY מוגדר"); return; }
   console.log(`[diag] מפתח OpenAI מוגדר (מסתיים ב-...${API_KEY.slice(-4)}), מודל:${MODEL}`);
@@ -259,9 +258,13 @@ async function callClaude(systemPrompt, messages, { retries = 1 } = {}) {
   throw lastError || new Error("claude failed");
 }
 
-// בוחר מוח: Claude אם יש מפתח, אחרת OpenAI.
-function callLLM(systemPrompt, messages, opts) {
-  return ANTHROPIC_KEY ? callClaude(systemPrompt, messages, opts) : callOpenAI(systemPrompt, messages, opts);
+// בוחר מוח: Claude קודם, ואם נכשל — OpenAI. רק אם שניהם נכשלים עוברים למוח המקומי.
+async function callLLM(systemPrompt, messages, opts) {
+  if (ANTHROPIC_KEY) {
+    try { return await callClaude(systemPrompt, messages, opts); }
+    catch (e) { if (!API_KEY) throw e; console.error("[brain] Claude נכשל, עובר ל-OpenAI"); }
+  }
+  return callOpenAI(systemPrompt, messages, opts);
 }
 
 // ── קריאה ל-OpenAI (Chat Completions) ──
