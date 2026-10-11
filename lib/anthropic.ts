@@ -14,6 +14,7 @@ const MODEL = process.env.MODEL || "claude-sonnet-4-6";
 
 // לקוח יחיד (קורא ANTHROPIC_API_KEY מהסביבה).
 const client = new Anthropic();
+const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -43,8 +44,9 @@ export async function askClaude(messages: ChatMsg[]): Promise<string> {
       throw new Error("empty response");
     } catch (err) {
       lastErr = err;
-      // 400/404 — שגיאת בקשה, אין טעם לנסות שוב
-      if (err instanceof Anthropic.BadRequestError || err instanceof Anthropic.NotFoundError) {
+      // 400/401/404 — שגיאת בקשה או מפתח, אין טעם לנסות שוב
+      if (err instanceof Anthropic.BadRequestError || err instanceof Anthropic.NotFoundError || err instanceof Anthropic.AuthenticationError) {
+        console.error("[anthropic] שגיאה קבועה:", (err as Error)?.message);
         break;
       }
       console.error(`[anthropic] ניסיון ${attempt} נכשל:`, (err as Error)?.message);
@@ -52,5 +54,31 @@ export async function askClaude(messages: ChatMsg[]): Promise<string> {
     }
   }
 
+  // גיבוי: אם יש מפתח OpenAI — אותו פרומפט, אותה שיחה, דרך GPT.
+  if (process.env.OPENAI_API_KEY) {
+    try {
+      return await askOpenAI(messages);
+    } catch (e) {
+      console.error("[openai] גיבוי נכשל:", (e as Error)?.message);
+    }
+  }
   throw lastErr instanceof Error ? lastErr : new Error("anthropic failed");
+}
+
+async function askOpenAI(messages: ChatMsg[]): Promise<string> {
+  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
+    body: JSON.stringify({
+      model: OPENAI_MODEL,
+      max_tokens: 1024,
+      messages: [{ role: "system", content: buildSystemPrompt() }, ...messages.map((m) => ({ role: m.role, content: m.content }))],
+    }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  const data = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+  const text = (data.choices?.[0]?.message?.content || "").trim();
+  if (!text) throw new Error("empty response");
+  console.log("[openai] ענה כגיבוי ל-Claude");
+  return text;
 }
