@@ -204,11 +204,36 @@ class MemoryStore implements Store {
   }
 }
 
+// אם Redis לא זמין (חיבור נפל / לא עונה תוך 3 שניות) — ממשיכים בזיכרון זמני ולא מפילים את הבוט.
+function withFallback(primary: Store, backup: Store): Store {
+  let warned = false;
+  let downUntil = 0; // אחרי כישלון — דילוג על Redis לדקה, כדי שהבוט לא יחכה בכל פעולה
+  return new Proxy(primary, {
+    get(target, prop: keyof Store) {
+      const fn = target[prop];
+      if (typeof fn !== "function") return fn;
+      return async (...args: unknown[]) => {
+        if (Date.now() < downUntil) return (backup[prop] as (...a: unknown[]) => Promise<unknown>).apply(backup, args);
+        try {
+          return await Promise.race([
+            (fn as (...a: unknown[]) => Promise<unknown>).apply(target, args),
+            new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 3000)),
+          ]);
+        } catch (e) {
+          downUntil = Date.now() + 60_000;
+          if (!warned) { console.error("[redis] Redis לא זמין, עובר לזיכרון זמני:", (e as Error).message); warned = true; }
+          return (backup[prop] as (...a: unknown[]) => Promise<unknown>).apply(backup, args);
+        }
+      };
+    },
+  });
+}
+
 function build(): Store {
   const url = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
   const token = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
   if (url && token) return new UpstashStore(new Redis({ url, token }));
-  if (process.env.REDIS_URL) return new TcpRedisStore(process.env.REDIS_URL);
+  if (process.env.REDIS_URL) return withFallback(new TcpRedisStore(process.env.REDIS_URL), new MemoryStore());
   if (process.env.NODE_ENV === "production") {
     console.warn("[redis] אין REDIS_URL או Upstash — משתמש בזיכרון זמני (לא מומלץ לפרודקשן)");
   }
