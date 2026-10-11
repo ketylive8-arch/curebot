@@ -95,9 +95,8 @@ export default function ChatDemo({ endpoint, needKey, title, subtitle, note, com
       </div>}
 
       <div style={{ flex: 1, overflowY: "auto", padding: 12, display: "flex", flexDirection: "column", gap: 6 }}>
-        {bubbles.length === 0 && (compact
-          ? <div style={{ alignSelf: "flex-end", background: "#fff", maxWidth: "82%", padding: "8px 12px", borderRadius: 12, lineHeight: 1.5, fontSize: 14.5, boxShadow: "0 1px 1px rgba(0,0,0,.12)" }}>היי, אני העוזרת של קטי שגב. אפשר לשאול אותי כל דבר על הליווי, או פשוט לספר מה קורה.</div>
-          : <div style={{ textAlign: "center", color: "#667", fontSize: 13, marginTop: 20 }}>לחצי על תרחיש למעלה או כתבי הודעה כמו לקוחה.</div>)}
+        {compact && <div style={{ alignSelf: "flex-end", background: "#fff", maxWidth: "82%", padding: "8px 12px", borderRadius: 12, lineHeight: 1.5, fontSize: 14.5, boxShadow: "0 1px 1px rgba(0,0,0,.12)" }}>היי, אני העוזרת של קטי שגב. אפשר לשאול אותי כל דבר על הליווי, או פשוט לספר מה קורה.</div>}
+        {!compact && bubbles.length === 0 && <div style={{ textAlign: "center", color: "#667", fontSize: 13, marginTop: 20 }}>לחצי על תרחיש למעלה או כתבי הודעה כמו לקוחה.</div>}
         {bubbles.map((b, i) => (
           <div key={i} style={{
             alignSelf: b.from === "me" ? "flex-start" : b.from === "bot" ? "flex-end" : "center",
