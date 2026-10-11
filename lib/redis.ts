@@ -3,6 +3,7 @@
 // עם אותה התנהגות בדיוק, כדי שהבדיקות ירוצו בלי רשת.
 
 import { Redis } from "@upstash/redis";
+import { createClient } from "redis";
 
 export type ChatMsg = { role: "user" | "assistant"; content: string };
 export type ConvMeta = {
@@ -33,6 +34,8 @@ interface Store {
   recordConversation(meta: ConvMeta): Promise<void>;
   listConversations(limit: number): Promise<ConvMeta[]>;
   getConversation(key: string): Promise<{ meta: ConvMeta | null; history: ChatMsg[] }>;
+  /** מונה פניות בחלון זמן (להגבלת קצב בדף הציבורי). מחזיר את המספר אחרי ההוספה. */
+  hit(key: string, windowSec: number): Promise<number>;
 }
 
 // ---------- מימוש Upstash ----------
@@ -85,10 +88,72 @@ class UpstashStore implements Store {
     const metas = await Promise.all(keys.map((k) => this.r.get<ConvMeta>(`meta:${k}`)));
     return metas.filter((m): m is ConvMeta => !!m);
   }
+  async hit(key: string, windowSec: number): Promise<number> {
+    const n = await this.r.incr(`rl:${key}`);
+    if (n === 1) await this.r.expire(`rl:${key}`, windowSec);
+    return n;
+  }
   async getConversation(key: string) {
     const meta = (await this.r.get<ConvMeta>(`meta:${key}`)) ?? null;
     const history = await this.getHistory(key);
     return { meta, history };
+  }
+}
+
+// ---------- מימוש Redis רגיל (למשל Render Key Value דרך REDIS_URL) ----------
+type RedisClient = ReturnType<typeof createClient>;
+class TcpRedisStore implements Store {
+  private ready: Promise<RedisClient>;
+  constructor(url: string) {
+    const c = createClient({ url });
+    c.on("error", (e) => console.error("[redis] שגיאת חיבור:", e.message));
+    this.ready = c.connect().then(() => c as RedisClient);
+  }
+  private async j<T>(key: string): Promise<T | null> {
+    const v = await (await this.ready).get(key);
+    return v ? (JSON.parse(v) as T) : null;
+  }
+  async getHistory(key: string) { return (await this.j<ChatMsg[]>(`hist:${key}`)) ?? []; }
+  async pushHistory(key: string, user: ChatMsg, assistant: ChatMsg) {
+    const hist = await this.getHistory(key);
+    hist.push(user, assistant);
+    await (await this.ready).set(`hist:${key}`, JSON.stringify(hist.slice(-HISTORY_MAX)), { EX: HISTORY_TTL });
+  }
+  async seenMessage(id: string) {
+    const res = await (await this.ready).set(`dedupe:${id}`, "1", { NX: true, EX: DEDUPE_TTL });
+    return res === null;
+  }
+  async isPaused(key: string) { return (await (await this.ready).exists(`pause:${key}`)) === 1; }
+  async pause(key: string, hours: number) {
+    await (await this.ready).set(`pause:${key}`, String(Date.now()), { EX: Math.max(1, Math.round(hours * 3600)) });
+  }
+  async resume(key: string) { await (await this.ready).del(`pause:${key}`); }
+  async isInfoSent(key: string) { return (await (await this.ready).exists(`info:${key}`)) === 1; }
+  async markInfoSent(key: string) { await (await this.ready).set(`info:${key}`, "1", { EX: HISTORY_TTL }); }
+  async isGloballyPaused() { return (await (await this.ready).exists("gpause")) === 1; }
+  async setGlobalPause(on: boolean) {
+    const r = await this.ready;
+    if (on) await r.set("gpause", "1"); else await r.del("gpause");
+  }
+  async recordConversation(meta: ConvMeta) {
+    const r = await this.ready;
+    await r.set(`meta:${meta.key}`, JSON.stringify(meta), { EX: HISTORY_TTL });
+    await r.zAdd("convindex", { score: meta.updated, value: meta.key });
+  }
+  async listConversations(limit: number) {
+    const r = await this.ready;
+    const keys = await r.zRange("convindex", 0, limit - 1, { REV: true });
+    const metas = await Promise.all(keys.map((k) => this.j<ConvMeta>(`meta:${k}`)));
+    return metas.filter((m): m is ConvMeta => !!m);
+  }
+  async getConversation(key: string) {
+    return { meta: await this.j<ConvMeta>(`meta:${key}`), history: await this.getHistory(key) };
+  }
+  async hit(key: string, windowSec: number) {
+    const r = await this.ready;
+    const n = await r.incr(`rl:${key}`);
+    if (n === 1) await r.expire(`rl:${key}`, windowSec);
+    return n;
   }
 }
 
@@ -129,14 +194,23 @@ class MemoryStore implements Store {
   async getConversation(key: string) {
     return { meta: this.metas.get(key) ?? null, history: await this.getHistory(key) };
   }
+  rl = new Map<string, { n: number; until: number }>();
+  async hit(key: string, windowSec: number) {
+    const now = Date.now();
+    const cur = this.rl.get(key);
+    const next = cur && cur.until > now ? { n: cur.n + 1, until: cur.until } : { n: 1, until: now + windowSec * 1000 };
+    this.rl.set(key, next);
+    return next.n;
+  }
 }
 
 function build(): Store {
   const url = process.env.UPSTASH_REDIS_REST_URL || process.env.KV_REST_API_URL;
   const token = process.env.UPSTASH_REDIS_REST_TOKEN || process.env.KV_REST_API_TOKEN;
   if (url && token) return new UpstashStore(new Redis({ url, token }));
+  if (process.env.REDIS_URL) return new TcpRedisStore(process.env.REDIS_URL);
   if (process.env.NODE_ENV === "production") {
-    console.warn("[redis] אין משתני Upstash — משתמש בזיכרון זמני (לא מומלץ לפרודקשן)");
+    console.warn("[redis] אין REDIS_URL או Upstash — משתמש בזיכרון זמני (לא מומלץ לפרודקשן)");
   }
   return new MemoryStore();
 }
