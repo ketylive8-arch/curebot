@@ -1,0 +1,16 @@
+{
+  "name": "CureBot · CURE MINDSET",
+  "short_name": "CureBot",
+  "description": "לוח הבקרה של העוזרת הדיגיטלית של קטי שגב",
+  "start_url": "/admin",
+  "scope": "/",
+  "display": "standalone",
+  "dir": "rtl",
+  "lang": "he",
+  "background_color": "#f5f1ea",
+  "theme_color": "#8a6a2f",
+  "icons": [
+    { "src": "/icon.png", "sizes": "1024x1024", "type": "image/png", "purpose": "any" },
+    { "src": "/icon.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}

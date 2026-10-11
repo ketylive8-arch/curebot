@@ -29,9 +29,47 @@ export default function Admin() {
   const [open, setOpen] = useState<{ meta: Conv; history: ChatMsg[] } | null>(null);
   const [err, setErr] = useState("");
 
+  const [pushState, setPushState] = useState<"" | "on" | "busy" | "denied" | "unsupported" | "ios-install">("");
+  const [pendingConv, setPendingConv] = useState("");
+
   useEffect(() => {
-    setKey(new URLSearchParams(location.search).get("key") || "");
+    // המפתח נשמר בטלפון אחרי הכניסה הראשונה, כדי שהאייקון במסך הבית ייפתח בלי להקליד אותו שוב
+    const q = new URLSearchParams(location.search);
+    let k = q.get("key") || "";
+    try { if (k) localStorage.setItem("cb-admin-key", k); else k = localStorage.getItem("cb-admin-key") || ""; } catch {}
+    setKey(k);
+    setPendingConv(q.get("c") || "");
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js").catch(() => {});
+      navigator.serviceWorker.addEventListener("message", (e) => { if (e.data?.openConversation) setPendingConv(e.data.openConversation); });
+    }
+    if (typeof Notification !== "undefined" && Notification.permission === "granted") setPushState("on");
   }, []);
+
+  async function enablePush() {
+    const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+    const standalone = window.matchMedia("(display-mode: standalone)").matches || (navigator as unknown as { standalone?: boolean }).standalone;
+    if (!("serviceWorker" in navigator) || !("PushManager" in window) || typeof Notification === "undefined") {
+      setPushState(isIOS && !standalone ? "ios-install" : "unsupported");
+      return;
+    }
+    setPushState("busy");
+    try {
+      const perm = await Notification.requestPermission();
+      if (perm !== "granted") { setPushState("denied"); return; }
+      const reg = await navigator.serviceWorker.ready;
+      const { publicKey } = await (await fetch(`/api/admin/push?key=${encodeURIComponent(key)}`)).json();
+      const pad = "=".repeat((4 - (publicKey.length % 4)) % 4);
+      const raw = atob((publicKey + pad).replace(/-/g, "+").replace(/_/g, "/"));
+      const appKey = Uint8Array.from(raw, (c) => c.charCodeAt(0));
+      const sub = (await reg.pushManager.getSubscription()) || (await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: appKey }));
+      await fetch(`/api/admin/push?key=${encodeURIComponent(key)}`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ subscription: sub.toJSON(), test: true }),
+      });
+      setPushState("on");
+    } catch { setPushState("unsupported"); }
+  }
 
   const load = useCallback(async () => {
     if (!key) return;
@@ -51,6 +89,13 @@ export default function Admin() {
     const t = setInterval(load, 8000);
     return () => clearInterval(t);
   }, [key, load]);
+
+  useEffect(() => {
+    if (!pendingConv || !convs.length) return;
+    const c = convs.find((x) => x.key === pendingConv);
+    if (c) { view(c); setPendingConv(""); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingConv, convs]);
 
   async function toggleGlobal() {
     await fetch(`/api/admin/pause?key=${encodeURIComponent(key)}`, {
@@ -87,13 +132,31 @@ export default function Admin() {
         </button>
       </header>
 
+      <div style={{ ...card, background: "#fbf4e6", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexWrap: "wrap" }}>
+        <div style={{ fontSize: 14, lineHeight: 1.5 }}>
+          {pushState === "on" ? "🔔 התראות פעילות בטלפון הזה: כל פנייה חדשה תקפוץ כהתראה."
+            : pushState === "ios-install" ? "באייפון: לוחצים על כפתור השיתוף ← \"הוספה למסך הבית\", פותחים מהאייקון החדש, ולוחצים כאן שוב."
+            : pushState === "denied" ? "ההתראות נחסמו בדפדפן. אפשר לאפשר אותן בהגדרות האתר בדפדפן."
+            : pushState === "unsupported" ? "הדפדפן הזה לא תומך בהתראות. נסי מכרום באנדרואיד, או מהאייקון במסך הבית באייפון."
+            : "רוצה לקבל התראה בטלפון על כל פנייה חדשה?"}
+        </div>
+        {pushState !== "on" && (
+          <button onClick={enablePush} disabled={pushState === "busy"} style={{ ...btn, background: "#8a6a2f", color: "#fff" }}>
+            {pushState === "busy" ? "מפעילה…" : "🔔 הפעלת התראות"}
+          </button>
+        )}
+      </div>
+
       {convs.length === 0 && <p style={{ color: "#8a8178" }}>אין עדיין שיחות.</p>}
 
       {convs.map((c) => (
         <div key={c.key} style={card}>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
             <div>
-              <b>{c.name || c.userId}</b>{" "}
+              <span style={{ fontSize: 12, background: "#efe7d6", borderRadius: 8, padding: "1px 7px", marginInlineEnd: 6 }}>
+                {c.channel === "whatsapp" ? "וואטסאפ" : c.channel === "try" ? "אתר" : c.channel === "demo" ? "דמו" : c.channel}
+              </span>
+              <b>{c.name || (c.channel === "whatsapp" ? c.userId : "פונה מהאתר")}</b>{" "}
               {c.flag && <span style={{ color: FLAG[c.flag].color, fontWeight: 700, fontSize: 13 }}>· {FLAG[c.flag].label}</span>}
               {c.paused && <span style={{ color: "#8a8178", fontSize: 13 }}> · מושהה</span>}
               <div style={{ color: "#8a8178", fontSize: 14, marginTop: 3 }}>"{c.last}"</div>

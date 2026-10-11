@@ -5,6 +5,7 @@
 import { askClaude } from "./anthropic";
 import { extractMarkers } from "./markers";
 import { CLOSING_CARD, FALLBACK_MESSAGE } from "./prompt";
+import { notifyKety } from "./push";
 import { store, type ConvMeta, type ChatMsg } from "./redis";
 
 // המוח מוזרק כדי שאפשר יהיה לבדוק את הליבה בלי קריאה אמיתית ל-Claude.
@@ -49,6 +50,7 @@ export async function handleIncoming(msg: IncomingMessage, ask: AskFn = askClaud
     console.error("[core] Claude נכשל — הודעת גיבוי:", (err as Error)?.message);
     await store.pushHistory(key, { role: "user", content: text }, { role: "assistant", content: FALLBACK_MESSAGE });
     await record(msg, key, text, "hot");
+    alertKety(msg, key, text, history.length === 0, { alert: false, human: false, ended: false });
     return { ...EMPTY, replies: [FALLBACK_MESSAGE] };
   }
 
@@ -76,8 +78,25 @@ export async function handleIncoming(msg: IncomingMessage, ask: AskFn = askClaud
     ? "ended"
     : "hot";
   await record(msg, key, text, flag);
+  alertKety(msg, key, text, history.length === 0, markers);
 
   return { replies, alert: markers.alert, human: markers.human, ended: markers.ended };
+}
+
+// התראה לטלפון של קטי: פנייה חדשה, בקשה לדבר איתה, מצוקה או שיחה שנסגרה. לא בדמו הפנימי.
+function alertKety(
+  msg: IncomingMessage, key: string, text: string, isNew: boolean,
+  m: { alert: boolean; human: boolean; ended: boolean },
+) {
+  if (msg.channel === "demo") return;
+  const where = msg.channel === "whatsapp" ? "בוואטסאפ" : "מהאתר";
+  let title = "";
+  if (m.alert) title = `🔴 מצוקה ${where} — כדאי לחזור עכשיו`;
+  else if (m.human) title = `🙋 ביקשו לדבר איתך ${where}`;
+  else if (m.ended) title = `📅 ליד ${where} קיבל קישור ליומן`;
+  else if (isNew) title = `✨ פנייה חדשה ${where}`;
+  if (!title) return;
+  notifyKety(title, text, key).catch((e) => console.error("[push]", (e as Error).message));
 }
 
 async function record(msg: IncomingMessage, key: string, last: string, flag: ConvMeta["flag"]) {

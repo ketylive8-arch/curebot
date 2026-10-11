@@ -36,6 +36,10 @@ interface Store {
   getConversation(key: string): Promise<{ meta: ConvMeta | null; history: ChatMsg[] }>;
   /** מונה פניות בחלון זמן (להגבלת קצב בדף הציבורי). מחזיר את המספר אחרי ההוספה. */
   hit(key: string, windowSec: number): Promise<number>;
+  /** מנויי התראות דחיפה (Web Push) של קטי — JSON של PushSubscription. */
+  addPushSub(sub: string): Promise<void>;
+  listPushSubs(): Promise<string[]>;
+  removePushSub(sub: string): Promise<void>;
 }
 
 // ---------- מימוש Upstash ----------
@@ -93,6 +97,12 @@ class UpstashStore implements Store {
     if (n === 1) await this.r.expire(`rl:${key}`, windowSec);
     return n;
   }
+  async addPushSub(sub: string) { await this.r.sadd("pushsubs", sub); }
+  async listPushSubs() {
+    const v = await this.r.smembers("pushsubs");
+    return (v as unknown[]).map((x) => (typeof x === "string" ? x : JSON.stringify(x)));
+  }
+  async removePushSub(sub: string) { await this.r.srem("pushsubs", sub); }
   async getConversation(key: string) {
     const meta = (await this.r.get<ConvMeta>(`meta:${key}`)) ?? null;
     const history = await this.getHistory(key);
@@ -149,6 +159,9 @@ class TcpRedisStore implements Store {
   async getConversation(key: string) {
     return { meta: await this.j<ConvMeta>(`meta:${key}`), history: await this.getHistory(key) };
   }
+  async addPushSub(sub: string) { await (await this.ready).sAdd("pushsubs", sub); }
+  async listPushSubs() { return (await this.ready).sMembers("pushsubs"); }
+  async removePushSub(sub: string) { await (await this.ready).sRem("pushsubs", sub); }
   async hit(key: string, windowSec: number) {
     const r = await this.ready;
     const n = await r.incr(`rl:${key}`);
@@ -194,6 +207,10 @@ class MemoryStore implements Store {
   async getConversation(key: string) {
     return { meta: this.metas.get(key) ?? null, history: await this.getHistory(key) };
   }
+  subs = new Set<string>();
+  async addPushSub(sub: string) { this.subs.add(sub); }
+  async listPushSubs() { return [...this.subs]; }
+  async removePushSub(sub: string) { this.subs.delete(sub); }
   rl = new Map<string, { n: number; until: number }>();
   async hit(key: string, windowSec: number) {
     const now = Date.now();
