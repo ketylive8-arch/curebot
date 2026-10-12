@@ -14,6 +14,9 @@ export type ConvMeta = {
   last: string;
   flag: "" | "hot" | "human" | "alert" | "ended";
   updated: number;
+  created?: number;
+  source?: string; // מאיזה עמוד/קמפיין הגיע (באתר)
+  lead?: import("./leads").Lead;
 };
 
 const HISTORY_MAX = 20;

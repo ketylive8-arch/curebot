@@ -16,12 +16,13 @@ export async function POST(req: NextRequest) {
   const [perIp, global] = await Promise.all([store.hit(`try:ip:${ip}`, 3600), store.hit("try:day", 86400)]);
   if (perIp > PER_IP_HOUR || global > GLOBAL_DAY) return new Response("Too many requests", { status: 429 });
 
-  const body = (await req.json().catch(() => ({}))) as { message?: string; session?: string };
+  const body = (await req.json().catch(() => ({}))) as { message?: string; session?: string; source?: string };
   const message = (body.message || "").toString().slice(0, 500);
   const session = (body.session || "").toString().replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 40);
   if (!message.trim() || !session) return new Response("Bad request", { status: 400 });
 
-  const result = await handleIncoming({ channel: "try", userId: session, text: message, messageId: randomUUID() });
+  const source = (body.source || "").toString().slice(0, 200) || undefined;
+  const result = await handleIncoming({ channel: "try", userId: session, text: message, messageId: randomUUID(), source });
   return Response.json({
     replies: result.replies,
     alert: result.alert,

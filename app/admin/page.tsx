@@ -10,8 +10,47 @@ type Conv = {
   last: string;
   flag: "" | "hot" | "human" | "alert" | "ended";
   updated: number;
+  created?: number;
+  source?: string;
   paused?: boolean;
+  lead?: Lead;
 };
+type Lead = { name?: string; phone?: string; email?: string; forWhom?: string; age?: string; city?: string; topic?: string; stage?: string; summary?: string };
+
+const pretty = (p?: string) => (p ? ("0" + p.replace(/^972/, "")).replace(/^(\d{3})(\d{3})(\d{4})$/, "$1-$2-$3") : "");
+const when = (t?: number) => (t ? new Date(t).toLocaleString("he-IL", { day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" }) : "");
+const srcLabel = (c: Conv) => c.channel === "whatsapp" ? "וואטסאפ" : c.channel === "try" ? "אתר" : c.channel === "demo" ? "דמו" : c.channel;
+const PAGES: Record<string, string> = {
+  "/": "דף הבית", "/anxiety-and-stress": "חרדה ולחץ", "/self-confidence": "ביטחון עצמי", "/procrastination": "דחיינות",
+  "/emotional-coaching": "ליווי רגשי", "/cure-teens": "CURE Teens", "/method": "השיטה", "/about": "אודות", "/faq": "שאלות נפוצות",
+  "/contact": "צור קשר", "/workshops": "סדנאות", "/programs": "תוכניות", "/gifts.html": "מתנות", "/personal": "ליווי אישי",
+};
+const SOURCES: Record<string, string> = { facebook: "פייסבוק", fb: "פייסבוק", instagram: "אינסטגרם", ig: "אינסטגרם", google: "גוגל", tiktok: "טיקטוק", whatsapp: "וואטסאפ", email: "מייל" };
+function srcPretty(src?: string) {
+  if (!src) return "";
+  if (src.startsWith("הפניה:")) return src;
+  try {
+    const u = new URL(src, "https://ketysegev.com");
+    const page = PAGES[u.pathname.replace(/\/$/, "") || "/"] || u.pathname;
+    const from = u.searchParams.get("utm_source") || "";
+    const camp = u.searchParams.get("utm_campaign") || "";
+    return [`עמוד: ${page}`, from && `מקור: ${SOURCES[from.toLowerCase()] || from}`, camp && `קמפיין: ${camp}`].filter(Boolean).join(" · ");
+  } catch { return src; }
+}
+function waHref(l?: Lead) {
+  if (!l?.phone) return "";
+  const hi = `היי${l.name ? " " + l.name : ""}, כאן קטי שגב 🙂 ראיתי שפנית אליי דרך האתר, אשמח לדבר.`;
+  return `https://wa.me/${l.phone}?text=${encodeURIComponent(hi)}`;
+}
+function exportCsv(convs: Conv[]) {
+  const head = ["תאריך", "מקור", "שם", "טלפון", "מייל", "למי", "גיל", "עיר", "נושא", "שלב", "סיכום", "עמוד/קמפיין"];
+  const rows = convs.filter((c) => c.channel !== "demo").map((c) => [when(c.created || c.updated), srcLabel(c), c.lead?.name, pretty(c.lead?.phone), c.lead?.email, c.lead?.forWhom, c.lead?.age, c.lead?.city, c.lead?.topic, c.lead?.stage, c.lead?.summary, srcPretty(c.source)]);
+  const csv = "\uFEFF" + [head, ...rows].map((r) => r.map((v) => `"${String(v ?? "").replace(/"/g, '""')}"`).join(",")).join("\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+  a.download = `curebot-leads-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+}
 type ChatMsg = { role: "user" | "assistant"; content: string };
 
 const FLAG: Record<string, { label: string; color: string }> = {
@@ -28,6 +67,7 @@ export default function Admin() {
   const [globallyPaused, setGloballyPaused] = useState(false);
   const [open, setOpen] = useState<{ meta: Conv; history: ChatMsg[] } | null>(null);
   const [err, setErr] = useState("");
+  const [onlyPhone, setOnlyPhone] = useState(false);
 
   const [pushState, setPushState] = useState<"" | "on" | "busy" | "denied" | "unsupported" | "ios-install">("");
   const [pendingConv, setPendingConv] = useState("");
@@ -149,24 +189,38 @@ export default function Admin() {
 
       {convs.length === 0 && <p style={{ color: "#8a8178" }}>אין עדיין שיחות.</p>}
 
-      {convs.map((c) => (
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+        <button onClick={() => setOnlyPhone(!onlyPhone)} style={{ ...btn, background: onlyPhone ? "#8a6a2f" : "#efe7d6", color: onlyPhone ? "#fff" : "#2b2723" }}>
+          {onlyPhone ? "✓ רק לידים עם טלפון" : "רק לידים עם טלפון"}
+        </button>
+        <button onClick={() => exportCsv(convs)} style={{ ...btn, background: "#efe7d6" }}>⬇️ הורדת רשימת לידים (אקסל)</button>
+      </div>
+
+      {convs.filter((c) => !onlyPhone || c.lead?.phone).map((c) => (
         <div key={c.key} style={card}>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap", alignItems: "baseline" }}>
             <div>
-              <span style={{ fontSize: 12, background: "#efe7d6", borderRadius: 8, padding: "1px 7px", marginInlineEnd: 6 }}>
-                {c.channel === "whatsapp" ? "וואטסאפ" : c.channel === "try" ? "אתר" : c.channel === "demo" ? "דמו" : c.channel}
-              </span>
-              <b>{c.name || (c.channel === "whatsapp" ? c.userId : "פונה מהאתר")}</b>{" "}
-              {c.flag && <span style={{ color: FLAG[c.flag].color, fontWeight: 700, fontSize: 13 }}>· {FLAG[c.flag].label}</span>}
+              <span style={{ fontSize: 12, background: "#efe7d6", borderRadius: 8, padding: "1px 7px", marginInlineEnd: 6 }}>{srcLabel(c)}</span>
+              <b>{c.lead?.name || c.name || (c.channel === "whatsapp" ? pretty(c.userId) : "פונה מהאתר")}</b>
+              {c.flag && <span style={{ color: FLAG[c.flag].color, fontWeight: 700, fontSize: 13 }}> · {FLAG[c.flag].label}</span>}
               {c.paused && <span style={{ color: "#8a8178", fontSize: 13 }}> · מושהה</span>}
-              <div style={{ color: "#8a8178", fontSize: 14, marginTop: 3 }}>"{c.last}"</div>
             </div>
-            <div style={{ display: "flex", gap: 6, alignItems: "flex-start" }}>
-              <button onClick={() => view(c)} style={{ ...btn, background: "#efe7d6" }}>צפייה</button>
-              <button onClick={() => togglePause(c)} style={{ ...btn, background: c.paused ? "#2e9e5b" : "#e0d6c4", color: c.paused ? "#fff" : "#2b2723" }}>
-                {c.paused ? "המשך בוט" : "השהה בוט"}
-              </button>
-            </div>
+            <span style={{ color: "#8a8178", fontSize: 12 }}>{when(c.updated)}</span>
+          </div>
+          {c.lead?.phone && <div style={{ fontSize: 15, marginTop: 4, direction: "ltr", textAlign: "right" }}>{pretty(c.lead.phone)}</div>}
+          {(c.lead?.forWhom || c.lead?.topic) && (
+            <div style={{ fontSize: 14, marginTop: 4 }}>{[c.lead?.forWhom, c.lead?.age && `גיל ${c.lead.age}`, c.lead?.city, c.lead?.topic].filter(Boolean).join(" · ")}</div>
+          )}
+          <div style={{ color: "#6b6560", fontSize: 14, marginTop: 4 }}>{c.lead?.summary || `"${c.last}"`}</div>
+          {c.lead?.stage && <div style={{ fontSize: 12.5, color: "#8a6a2f", marginTop: 4 }}>שלב: {c.lead.stage}</div>}
+          {c.source && <div style={{ fontSize: 12.5, color: "#8a8178", marginTop: 2 }}>{srcPretty(c.source)}</div>}
+          <div style={{ display: "flex", gap: 6, marginTop: 10, flexWrap: "wrap" }}>
+            {c.lead?.phone && <a href={waHref(c.lead)} target="_blank" rel="noopener noreferrer" style={{ ...btn, background: "#25d366", color: "#fff", textDecoration: "none" }}>💬 וואטסאפ</a>}
+            {c.lead?.phone && <a href={`tel:+${c.lead.phone}`} style={{ ...btn, background: "#2b2723", color: "#fff", textDecoration: "none" }}>📞 חיוג</a>}
+            <button onClick={() => view(c)} style={{ ...btn, background: "#efe7d6" }}>השיחה המלאה</button>
+            <button onClick={() => togglePause(c)} style={{ ...btn, background: c.paused ? "#2e9e5b" : "#e0d6c4", color: c.paused ? "#fff" : "#2b2723" }}>
+              {c.paused ? "המשך בוט" : "השהה בוט"}
+            </button>
           </div>
         </div>
       ))}
@@ -174,7 +228,19 @@ export default function Admin() {
       {open && (
         <div onClick={() => setOpen(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.4)", display: "grid", placeItems: "center", padding: 16 }}>
           <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 16, padding: 16, maxWidth: 460, width: "100%", maxHeight: "80vh", overflowY: "auto" }}>
-            <div style={{ fontWeight: 800, marginBottom: 10 }}>{open.meta.name || open.meta.userId}</div>
+            <div style={{ fontWeight: 800, marginBottom: 6 }}>{open.meta.lead?.name || open.meta.name || "פונה מהאתר"} · {srcLabel(open.meta)}</div>
+            {open.meta.lead && (
+              <div style={{ background: "#fbf4e6", borderRadius: 12, padding: 10, marginBottom: 10, fontSize: 14, lineHeight: 1.6 }}>
+                {open.meta.lead.phone && <div>טלפון: <span style={{ direction: "ltr", display: "inline-block" }}>{pretty(open.meta.lead.phone)}</span></div>}
+                {open.meta.lead.email && <div>מייל: {open.meta.lead.email}</div>}
+                {open.meta.lead.forWhom && <div>למי: {open.meta.lead.forWhom}{open.meta.lead.age ? ` · גיל ${open.meta.lead.age}` : ""}</div>}
+                {open.meta.lead.city && <div>עיר: {open.meta.lead.city}</div>}
+                {open.meta.lead.topic && <div>נושא: {open.meta.lead.topic}</div>}
+                {open.meta.lead.stage && <div>שלב: {open.meta.lead.stage}</div>}
+                {open.meta.lead.summary && <div style={{ marginTop: 4 }}><b>סיכום:</b> {open.meta.lead.summary}</div>}
+                {open.meta.source && <div style={{ color: "#8a8178", fontSize: 12.5 }}>{srcPretty(open.meta.source)} · {when(open.meta.created)}</div>}
+              </div>
+            )}
             {open.history.map((m, i) => (
               <div key={i} style={{
                 background: m.role === "user" ? "#efe7d6" : "#f3f6f2",

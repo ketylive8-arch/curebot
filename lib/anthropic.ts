@@ -22,7 +22,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
  * שולח את היסטוריית השיחה + ההודעה החדשה ל-Claude ומחזיר טקסט גולמי
  * (כולל הסמנים, אם יש). זורק אם כל הניסיונות נכשלו.
  */
-export async function askClaude(messages: ChatMsg[]): Promise<string> {
+export async function askClaude(messages: ChatMsg[], extraSystem?: string): Promise<string> {
   let lastErr: unknown = null;
 
   for (let attempt = 1; attempt <= 3; attempt++) {
@@ -30,7 +30,7 @@ export async function askClaude(messages: ChatMsg[]): Promise<string> {
       const resp = await client.messages.create({
         model: MODEL,
         max_tokens: 1024,
-        system: SYSTEM_BLOCKS,
+        system: extraSystem ? [...SYSTEM_BLOCKS, { type: "text", text: extraSystem }] : SYSTEM_BLOCKS,
         messages: messages.map((m) => ({ role: m.role, content: m.content })),
       });
 
@@ -57,7 +57,7 @@ export async function askClaude(messages: ChatMsg[]): Promise<string> {
   // גיבוי: אם יש מפתח OpenAI — אותו פרומפט, אותה שיחה, דרך GPT.
   if (process.env.OPENAI_API_KEY) {
     try {
-      return await askOpenAI(messages);
+      return await askOpenAI(messages, extraSystem);
     } catch (e) {
       console.error("[openai] גיבוי נכשל:", (e as Error)?.message);
     }
@@ -65,14 +65,14 @@ export async function askClaude(messages: ChatMsg[]): Promise<string> {
   throw lastErr instanceof Error ? lastErr : new Error("anthropic failed");
 }
 
-async function askOpenAI(messages: ChatMsg[]): Promise<string> {
+async function askOpenAI(messages: ChatMsg[], extraSystem?: string): Promise<string> {
   const res = await fetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
     body: JSON.stringify({
       model: OPENAI_MODEL,
       max_tokens: 1024,
-      messages: [{ role: "system", content: buildSystemPrompt() }, ...messages.map((m) => ({ role: m.role, content: m.content }))],
+      messages: [{ role: "system", content: buildSystemPrompt() + (extraSystem ? "\n\n" + extraSystem : "") }, ...messages.map((m) => ({ role: m.role, content: m.content }))],
     }),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);

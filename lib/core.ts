@@ -6,10 +6,11 @@ import { askClaude } from "./anthropic";
 import { extractMarkers } from "./markers";
 import { CLOSING_CARD, FALLBACK_MESSAGE } from "./prompt";
 import { notifyKety } from "./push";
+import { extractLead, prettyPhone } from "./leads";
 import { store, type ConvMeta, type ChatMsg } from "./redis";
 
 // המוח מוזרק כדי שאפשר יהיה לבדוק את הליבה בלי קריאה אמיתית ל-Claude.
-export type AskFn = (messages: ChatMsg[]) => Promise<string>;
+export type AskFn = (messages: ChatMsg[], extraSystem?: string) => Promise<string>;
 
 export type IncomingMessage = {
   channel: string; // "whatsapp" | "instagram" | "messenger"
@@ -17,6 +18,7 @@ export type IncomingMessage = {
   text: string;
   messageId: string;
   name?: string;
+  source?: string; // באתר: העמוד/הקמפיין שממנו נפתח הצ'אט
 };
 
 export type HandleResult = {
@@ -45,7 +47,7 @@ export async function handleIncoming(msg: IncomingMessage, ask: AskFn = askClaud
 
   let raw: string;
   try {
-    raw = await ask(messages);
+    raw = await ask(messages, channelContext(msg.channel));
   } catch (err) {
     console.error("[core] Claude נכשל — הודעת גיבוי:", (err as Error)?.message);
     await store.pushHistory(key, { role: "user", content: text }, { role: "assistant", content: FALLBACK_MESSAGE });
@@ -79,6 +81,7 @@ export async function handleIncoming(msg: IncomingMessage, ask: AskFn = askClaud
     : "hot";
   await record(msg, key, text, flag);
   alertKety(msg, key, text, history.length === 0, markers);
+  updateLead(msg, key).catch((e) => console.error("[lead]", (e as Error).message));
 
   return { replies, alert: markers.alert, human: markers.human, ended: markers.ended };
 }
@@ -100,13 +103,47 @@ function alertKety(
 }
 
 async function record(msg: IncomingMessage, key: string, last: string, flag: ConvMeta["flag"]) {
+  // שומרים על מה שכבר נאסף (כרטיס ליד, מקור, מועד הפנייה הראשונה)
+  const prev = (await store.getConversation(key)).meta;
   await store.recordConversation({
     key,
     channel: msg.channel,
     userId: msg.userId,
-    name: msg.name,
+    name: msg.name || prev?.name,
     last: last.slice(0, 120),
     flag,
     updated: Date.now(),
+    created: prev?.created || Date.now(),
+    source: prev?.source || msg.source,
+    lead: prev?.lead,
   });
+}
+
+// הקשר לפי ערוץ: באתר אין לנו את מספר הטלפון של הפונה, ולכן מבקשים אותו בעדינות.
+function channelContext(channel: string): string | undefined {
+  if (channel !== "try") return undefined;
+  return `=== הקשר: צ'אט באתר ===
+השיחה הזו מתקיימת בצ'אט באתר של קטי, לא בוואטסאפ. אין לך את מספר הטלפון של הפונה, ובלי פרטים קטי לא תוכל לחזור.
+- לא מבקשים פרטים בהודעה הראשונה. קודם מקשיבים ומבינים.
+- כשיש עניין (רוצה שיחה, שואל/ת על מחיר או התאמה, מבקש/ת את קטי) — מבקשים בעדינות שם ומספר וואטסאפ, למשל: "כדי שקטי תוכל לחזור אלייך אישית, איך קוראים לך ומה מספר הוואטסאפ שלך?"
+- אחרי שנתנו: מודים בקצרה ואומרים שקטי תחזור. אפשר להציע גם קישור ליומן (עם [[END]]).
+- לא רוצים לתת פרטים — בסדר גמור, לא לוחצים. מציעים את הקישור ליומן.
+- מבקשים פעם אחת בלבד; לא חוזרים על הבקשה בכל הודעה.`;
+}
+
+// מעדכן את כרטיס הליד אחרי כל הודעה, ומתריע לקטי ברגע שיש טלפון חדש.
+async function updateLead(msg: IncomingMessage, key: string) {
+  if (msg.channel === "demo") return;
+  const { meta, history } = await store.getConversation(key);
+  if (!meta) return;
+  const prevPhone = meta.lead?.phone;
+  const lead = await extractLead(history, meta.lead || {});
+  if (msg.channel === "whatsapp" && !lead.phone) lead.phone = msg.userId; // בוואטסאפ המספר ידוע
+  // קוראים שוב את המצב העדכני (ייתכן שבינתיים הגיעה הודעה נוספת) ומעדכנים רק את הכרטיס
+  const latest = (await store.getConversation(key)).meta || meta;
+  await store.recordConversation({ ...latest, lead: { ...latest.lead, ...lead } });
+  if (lead.phone && lead.phone !== prevPhone && msg.channel !== "whatsapp") {
+    const who = [lead.name, prettyPhone(lead.phone)].filter(Boolean).join(" · ");
+    notifyKety(`📞 ליד עם טלפון מהאתר: ${who}`, lead.summary || lead.topic || msg.text, key).catch(() => {});
+  }
 }

@@ -20,6 +20,7 @@ type Props = { endpoint: string; needKey: boolean; title: string; subtitle: stri
 
 export default function ChatDemo({ endpoint, needKey, title, subtitle, note, compact }: Props) {
   const [key, setKey] = useState("");
+  const [source, setSource] = useState("");
   const [session, setSession] = useState(newSession);
   const [bubbles, setBubbles] = useState<Bubble[]>([]);
   const [input, setInput] = useState("");
@@ -27,7 +28,9 @@ export default function ChatDemo({ endpoint, needKey, title, subtitle, note, com
   const end = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    setKey(new URLSearchParams(location.search).get("key") || "");
+    const q = new URLSearchParams(location.search);
+    setKey(q.get("key") || "");
+    setSource((q.get("src") || (document.referrer ? "הפניה: " + document.referrer : "")).slice(0, 200));
   }, []);
   useEffect(() => {
     end.current?.scrollIntoView({ behavior: "smooth" });
@@ -43,7 +46,7 @@ export default function ChatDemo({ endpoint, needKey, title, subtitle, note, com
       const r = await fetch(needKey ? `${endpoint}?key=${encodeURIComponent(key)}` : endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text, session }),
+        body: JSON.stringify({ message: text, session, source }),
       });
       if (r.status === 429) {
         setBubbles((b) => [...b, { from: "sys", text: "הגעת למספר ההודעות המרבי להדגמה. אפשר לנסות שוב בעוד שעה, או לדבר עם קטי ישירות: https://calendly.com/ketysegev/meet-with-me" }]);
