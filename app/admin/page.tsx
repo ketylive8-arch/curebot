@@ -79,6 +79,12 @@ export default function Admin() {
     try { if (k) localStorage.setItem("cb-admin-key", k); else k = localStorage.getItem("cb-admin-key") || ""; } catch {}
     setKey(k);
     setPendingConv(q.get("c") || "");
+    // אייקון במסך הבית ייפתח ישר ללוח, עם המפתח
+    if (k) {
+      const link = document.querySelector('link[rel="manifest"]') as HTMLLinkElement | null;
+      if (link) link.href = `/api/manifest?key=${encodeURIComponent(k)}`;
+      if (!q.get("key")) history.replaceState(null, "", `/admin?key=${encodeURIComponent(k)}${q.get("c") ? "&c=" + encodeURIComponent(q.get("c")!) : ""}`);
+    }
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker.register("/sw.js").catch(() => {});
       navigator.serviceWorker.addEventListener("message", (e) => { if (e.data?.openConversation) setPendingConv(e.data.openConversation); });
@@ -207,7 +213,9 @@ export default function Admin() {
             </div>
             <span style={{ color: "#8a8178", fontSize: 12 }}>{when(c.updated)}</span>
           </div>
-          {c.lead?.phone && <div style={{ fontSize: 15, marginTop: 4, direction: "ltr", textAlign: "right" }}>{pretty(c.lead.phone)}</div>}
+          {c.lead?.phone
+            ? <div style={{ fontSize: 15, marginTop: 4, direction: "ltr", textAlign: "right" }}>{pretty(c.lead.phone)}</div>
+            : c.channel === "try" && <div style={{ fontSize: 12.5, color: "#a0522d", marginTop: 4 }}>עוד לא השאיר/ה שם וטלפון, ולכן אי אפשר לחזור אליו/ה. הסוכן יבקש בהמשך השיחה.</div>}
           {(c.lead?.forWhom || c.lead?.topic) && (
             <div style={{ fontSize: 14, marginTop: 4 }}>{[c.lead?.forWhom, c.lead?.age && `גיל ${c.lead.age}`, c.lead?.city, c.lead?.topic].filter(Boolean).join(" · ")}</div>
           )}

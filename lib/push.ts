@@ -12,6 +12,7 @@ export const pushPublicKey = () => PUB;
 export async function notifyKety(title: string, body: string, conversation?: string) {
   if (!PUB || !PRIV) return;
   const subs = await store.listPushSubs();
+  console.log(`[push] → ${title} (${subs.length} מכשירים)`);
   const payload = JSON.stringify({ title, body: body.slice(0, 160), conversation: conversation || "" });
   await Promise.all(
     subs.map(async (raw) => {

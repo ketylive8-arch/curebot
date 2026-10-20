@@ -52,7 +52,7 @@ export async function handleIncoming(msg: IncomingMessage, ask: AskFn = askClaud
     console.error("[core] Claude נכשל — הודעת גיבוי:", (err as Error)?.message);
     await store.pushHistory(key, { role: "user", content: text }, { role: "assistant", content: FALLBACK_MESSAGE });
     await record(msg, key, text, "hot");
-    alertKety(msg, key, text, history.length === 0, { alert: false, human: false, ended: false });
+    updateLead(msg, key, history.length === 0).catch(() => {});
     return { ...EMPTY, replies: [FALLBACK_MESSAGE] };
   }
 
@@ -81,7 +81,7 @@ export async function handleIncoming(msg: IncomingMessage, ask: AskFn = askClaud
     : "hot";
   await record(msg, key, text, flag);
   alertKety(msg, key, text, history.length === 0, markers);
-  updateLead(msg, key).catch((e) => console.error("[lead]", (e as Error).message));
+  updateLead(msg, key, history.length === 0).catch((e) => console.error("[lead]", (e as Error).message));
 
   return { replies, alert: markers.alert, human: markers.human, ended: markers.ended };
 }
@@ -94,11 +94,10 @@ function alertKety(
   if (msg.channel === "demo") return;
   const where = msg.channel === "whatsapp" ? "בוואטסאפ" : "מהאתר";
   let title = "";
-  if (m.alert) title = `🔴 מצוקה ${where} — כדאי לחזור עכשיו`;
+  if (m.alert) title = `🔴 מצוקה ${where}, כדאי לחזור עכשיו`;
   else if (m.human) title = `🙋 ביקשו לדבר איתך ${where}`;
   else if (m.ended) title = `📅 ליד ${where} קיבל קישור ליומן`;
-  else if (isNew) title = `✨ פנייה חדשה ${where}`;
-  if (!title) return;
+  if (!title) return; // פנייה חדשה מתריעה מתוך updateLead, אחרי שיש סיכום
   notifyKety(title, text, key).catch((e) => console.error("[push]", (e as Error).message));
 }
 
@@ -125,14 +124,14 @@ function channelContext(channel: string): string | undefined {
   return `=== הקשר: צ'אט באתר ===
 השיחה הזו מתקיימת בצ'אט באתר של קטי, לא בוואטסאפ. אין לך את מספר הטלפון של הפונה, ובלי פרטים קטי לא תוכל לחזור.
 - לא מבקשים פרטים בהודעה הראשונה. קודם מקשיבים ומבינים.
-- כשיש עניין (רוצה שיחה, שואל/ת על מחיר או התאמה, מבקש/ת את קטי) — מבקשים בעדינות שם ומספר וואטסאפ, למשל: "כדי שקטי תוכל לחזור אלייך אישית, איך קוראים לך ומה מספר הוואטסאפ שלך?"
+- בתשובה השנייה או השלישית שלך, ברגע שהבנת במה מדובר (או מיד כשיש עניין: רוצה שיחה, שואל/ת על מחיר או התאמה, מבקש/ת את קטי) — מבקשים בעדינות שם ומספר וואטסאפ, למשל: "כדי שקטי תוכל לחזור אלייך אישית, איך קוראים לך ומה מספר הוואטסאפ שלך?". אנשים באתר יוצאים מהר — אל תחכי יותר מדי.
 - אחרי שנתנו: מודים בקצרה ואומרים שקטי תחזור. אפשר להציע גם קישור ליומן (עם [[END]]).
 - לא רוצים לתת פרטים — בסדר גמור, לא לוחצים. מציעים את הקישור ליומן.
 - מבקשים פעם אחת בלבד; לא חוזרים על הבקשה בכל הודעה.`;
 }
 
 // מעדכן את כרטיס הליד אחרי כל הודעה, ומתריע לקטי ברגע שיש טלפון חדש.
-async function updateLead(msg: IncomingMessage, key: string) {
+async function updateLead(msg: IncomingMessage, key: string, isNew = false) {
   if (msg.channel === "demo") return;
   const { meta, history } = await store.getConversation(key);
   if (!meta) return;
@@ -142,6 +141,11 @@ async function updateLead(msg: IncomingMessage, key: string) {
   // קוראים שוב את המצב העדכני (ייתכן שבינתיים הגיעה הודעה נוספת) ומעדכנים רק את הכרטיס
   const latest = (await store.getConversation(key)).meta || meta;
   await store.recordConversation({ ...latest, lead: { ...latest.lead, ...lead } });
+  const where = msg.channel === "whatsapp" ? "בוואטסאפ" : "מהאתר";
+  const about = [lead.forWhom, lead.topic].filter(Boolean).join(" · ");
+  if (isNew) {
+    notifyKety(`✨ פנייה חדשה ${where}${about ? ": " + about : ""}`, lead.summary || msg.text, key).catch(() => {});
+  }
   if (lead.phone && lead.phone !== prevPhone && msg.channel !== "whatsapp") {
     const who = [lead.name, prettyPhone(lead.phone)].filter(Boolean).join(" · ");
     notifyKety(`📞 ליד עם טלפון מהאתר: ${who}`, lead.summary || lead.topic || msg.text, key).catch(() => {});
