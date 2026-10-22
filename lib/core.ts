@@ -150,5 +150,25 @@ async function updateLead(msg: IncomingMessage, key: string, isNew = false) {
   if (lead.phone && lead.phone !== prevPhone && msg.channel !== "whatsapp") {
     const who = [lead.name, prettyPhone(lead.phone)].filter(Boolean).join(" · ");
     notifyKety(`📞 ליד עם טלפון מהאתר: ${who}`, lead.summary || lead.topic || msg.text, key).catch(() => {});
+    sendToSite(lead, meta.source).catch((e) => console.error("[site-lead]", (e as Error).message));
   }
+}
+
+// סנכרון עם האתר: ליד שהשאיר טלפון נשלח גם למערכת הלידים של האתר (המייל של קטי),
+// כדי שכל הלידים יגיעו למקום אחד — לא משנה אם מטופס באתר או מקטי AI.
+const SITE_LEAD_URL = process.env.SITE_LEAD_URL || "https://curemindsetheraphy.onrender.com/api/send-lead";
+async function sendToSite(lead: import("./leads").Lead, source?: string) {
+  const details = [lead.forWhom, lead.age && `גיל ${lead.age}`, lead.city, lead.topic, lead.stage, lead.summary].filter(Boolean).join(" · ");
+  const res = await fetch(SITE_LEAD_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      fullName: lead.name || "",
+      phone: prettyPhone(lead.phone),
+      email: lead.email || "",
+      onboarding: details.slice(0, 400),
+      source: ("קטי AI באתר" + (source ? " · " + source : "")).slice(0, 60),
+    }),
+  });
+  console.log(`[site-lead] נשלח לאתר: HTTP ${res.status}`);
 }
