@@ -5,7 +5,7 @@ const nextConfig = {
   // instrumentation.ts נבנה גם לסביבת edge; שם לא צריך (ולא אפשר) את חבילות ה-Node.
   webpack: (config, { nextRuntime }) => {
     if (nextRuntime === "edge") {
-      config.resolve.alias = { ...config.resolve.alias, "./lib/digest": false };
+      config.resolve.alias = { ...config.resolve.alias, "./lib/digest": false, "./lib/waspawn": false };
     }
     return config;
   },

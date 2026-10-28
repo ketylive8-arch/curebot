@@ -68,6 +68,9 @@ export default function Admin() {
   const [open, setOpen] = useState<{ meta: Conv; history: ChatMsg[] } | null>(null);
   const [err, setErr] = useState("");
   const [onlyPhone, setOnlyPhone] = useState(false);
+  const [wa, setWa] = useState<{ status: string; qrDataUrl?: string; pairingCode?: string; me?: string; lastEvent?: string; contacts?: number; stale?: boolean } | null>(null);
+  const [waPhone, setWaPhone] = useState("0543032349");
+  const [waConfirmLogout, setWaConfirmLogout] = useState(false);
 
   const [pushState, setPushState] = useState<"" | "on" | "busy" | "denied" | "unsupported" | "ios-install">("");
   const [pendingConv, setPendingConv] = useState("");
@@ -137,6 +140,24 @@ export default function Admin() {
   }, [key, load]);
 
   useEffect(() => {
+    if (!key) return;
+    const loadWa = async () => {
+      try { const r = await fetch(`/api/admin/wa?key=${encodeURIComponent(key)}`); if (r.ok) setWa(await r.json()); } catch {}
+    };
+    loadWa();
+    const t = setInterval(loadWa, 5000);
+    return () => clearInterval(t);
+  }, [key]);
+
+  async function waAction(action: "pair" | "logout") {
+    const phone = "972" + waPhone.replace(/\D/g, "").replace(/^0/, "").replace(/^972/, "");
+    await fetch(`/api/admin/wa?key=${encodeURIComponent(key)}`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action, phone }),
+    });
+    setWaConfirmLogout(false);
+  }
+
+  useEffect(() => {
     if (!pendingConv || !convs.length) return;
     const c = convs.find((x) => x.key === pendingConv);
     if (c) { view(c); setPendingConv(""); }
@@ -193,8 +214,51 @@ export default function Admin() {
         )}
       </div>
 
-      {convs.length === 0 && <p style={{ color: "#8a8178" }}>אין עדיין שיחות.</p>}
 
+      {wa && wa.status !== "off" && (
+        <div style={{ ...card, borderColor: wa.status === "connected" ? "#9fd3b0" : "#e6c99a" }}>
+          <div style={{ fontWeight: 800, marginBottom: 6 }}>
+            וואטסאפ {wa.status === "connected" ? "· ✅ מחובר ועונה" : wa.status === "qr" ? "· ממתין לחיבור" : "· " + (wa.lastEvent || wa.status)}
+          </div>
+          {wa.status === "connected" && (
+            <div style={{ fontSize: 14, lineHeight: 1.6 }}>
+              המספר {pretty(wa.me)} מחובר. הבוט עונה רק למי שלא שמור באנשי הקשר שלך{wa.contacts ? ` (${wa.contacts} אנשי קשר מוגנים)` : ""}, לא בקבוצות.
+              כשאת עונה בעצמך — הוא שותק בשיחה 12 שעות.
+              <div style={{ marginTop: 8 }}>
+                {!waConfirmLogout
+                  ? <button onClick={() => setWaConfirmLogout(true)} style={{ ...btn, background: "#efe7d6" }}>ניתוק</button>
+                  : <span>לנתק את הבוט מהוואטסאפ? <button onClick={() => waAction("logout")} style={{ ...btn, background: "#c65b4e", color: "#fff" }}>כן, לנתק</button> <button onClick={() => setWaConfirmLogout(false)} style={{ ...btn, background: "#efe7d6" }}>ביטול</button></span>}
+              </div>
+            </div>
+          )}
+          {wa.status === "qr" && (
+            <div style={{ fontSize: 14, lineHeight: 1.6 }}>
+              {wa.pairingCode ? (
+                <div>
+                  <div style={{ fontSize: 30, fontWeight: 800, letterSpacing: 4, direction: "ltr", textAlign: "center", margin: "8px 0" }}>{wa.pairingCode}</div>
+                  בטלפון של הקליניקה: וואטסאפ ← הגדרות ← <b>מכשירים מקושרים</b> ← <b>קישור מכשיר</b> ← למטה <b>"קישור עם מספר טלפון במקום"</b> ← מקלידים את הקוד.
+                </div>
+              ) : (
+                <div>
+                  <div style={{ marginBottom: 8 }}>מחברים פעם אחת. מהטלפון של הקליניקה עצמו — קוד חיבור:</div>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+                    <input value={waPhone} onChange={(e) => setWaPhone(e.target.value)} inputMode="tel" style={{ border: "1px solid #e6ddcf", borderRadius: 10, padding: "7px 10px", fontSize: 15, width: 140, direction: "ltr" }} />
+                    <button onClick={() => waAction("pair")} style={{ ...btn, background: "#25d366", color: "#fff" }}>קבלת קוד חיבור</button>
+                  </div>
+                  {wa.qrDataUrl && (
+                    <div style={{ marginTop: 10 }}>
+                      או ממחשב — סורקים מהטלפון (מכשירים מקושרים ← קישור מכשיר):
+                      <img src={wa.qrDataUrl} alt="QR לחיבור וואטסאפ" style={{ display: "block", width: 220, height: 220, marginTop: 6 }} />
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {convs.length === 0 && <p style={{ color: "#8a8178" }}>אין עדיין שיחות.</p>}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
         <button onClick={() => setOnlyPhone(!onlyPhone)} style={{ ...btn, background: onlyPhone ? "#8a6a2f" : "#efe7d6", color: onlyPhone ? "#fff" : "#2b2723" }}>
           {onlyPhone ? "✓ רק לידים עם טלפון" : "רק לידים עם טלפון"}
