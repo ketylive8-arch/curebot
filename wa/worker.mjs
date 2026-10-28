@@ -150,7 +150,10 @@ async function start() {
   sock.ev.on("messaging-history.set", ({ contacts }) => registerContacts(contacts));
 
   sock.ev.on("connection.update", async ({ connection, lastDisconnect, qr }) => {
-    if (qr) await setState({ status: "qr", qr, lastEvent: "ממתין לחיבור — סריקת QR או קוד חיבור" });
+    if (qr) {
+      if (state.status !== "qr") console.log("[wa] פועל — ממתין לחיבור (QR או קוד חיבור)");
+      await setState({ status: "qr", qr, lastEvent: "ממתין לחיבור — סריקת QR או קוד חיבור" });
+    }
     if (connection === "open") {
       attempts = 0;
       await setState({ status: "connected", qr: "", pairingCode: "", me: (sock.user?.id || "").split(":")[0], lastEvent: "מחובר ועונה" });
@@ -205,5 +208,6 @@ setInterval(async () => {
   }
 }, 2000);
 
+console.log("[wa] תהליך הוואטסאפ עלה");
 await setState({ status: "starting", lastEvent: "מתחבר…" });
 await start();
