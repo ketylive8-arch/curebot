@@ -27,3 +27,21 @@ export async function sendWaCommand(cmd: { action: "pair" | "logout"; phone?: st
   if (!r) throw new Error("no redis");
   await (await r).set("wa:cmd", JSON.stringify(cmd), { EX: 60 });
 }
+
+export type WaLog = { t: number; who: string; name: string; action: string };
+
+/** יומן ההודעות הפרטיות האחרונות (נענתה / למה לא) והאם עונים גם לאנשי קשר שמורים. */
+export async function getWaExtras(): Promise<{ log: WaLog[]; answerContacts: boolean }> {
+  const r = redis();
+  if (!r) return { log: [], answerContacts: false };
+  const c = await r;
+  const [raw, ac] = await Promise.all([c.lRange("wa:log", 0, 19), c.get("wa:answerContacts")]);
+  return { log: raw.map((x) => JSON.parse(x) as WaLog), answerContacts: !!ac };
+}
+
+export async function setAnswerContacts(on: boolean) {
+  const r = redis();
+  if (!r) throw new Error("no redis");
+  if (on) await (await r).set("wa:answerContacts", "1");
+  else await (await r).del("wa:answerContacts");
+}

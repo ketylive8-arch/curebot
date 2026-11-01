@@ -86,6 +86,15 @@ async function toCore(body) {
   return res.json();
 }
 
+// יומן קצר בלוח הבקרה: מה קרה לכל הודעה פרטית שנכנסה (נענתה / למה לא)
+async function activity(userId, name, action) {
+  const who = userId.length > 6 ? userId.slice(0, 5) + "…" + userId.slice(-2) : userId;
+  console.log(`[wa] ${who}: ${action}`);
+  await r.lPush("wa:log", JSON.stringify({ t: Date.now(), who: userId, name: name || "", action })).catch(() => {});
+  await r.lTrim("wa:log", 0, 49).catch(() => {});
+}
+const OPT_OUT = /^\s*(הסר|הסירו|תסיר|תסירו|להסיר|הסרה|הסר אותי|תסירו אותי|stop)\s*[.!]*\s*$/i;
+
 const sentByBot = new Set(); // מזהי הודעות שהבוט שלח — כדי להבחין בין הבוט לבין קטי
 const msgStore = new Map();
 let sock = null;
@@ -113,12 +122,21 @@ async function handle(m) {
     return;
   }
 
-  if (await r.sIsMember("wa:contacts", jid) || (replyJid !== jid && await r.sIsMember("wa:contacts", replyJid))) return;
-  if (!(await r.get("wa:contacts:synced"))) { console.log("[wa] אנשי הקשר עוד לא סונכרנו — לא עונים בינתיים"); return; }
-
   const text = extractText(m);
   const isAudio = !!(m.message?.audioMessage);
-  if (!text && !isAudio) return;
+  const name = m.pushName || "";
+  if (await r.sIsMember("wa:optout", userId)) return activity(userId, name, "ביקש/ה להסיר — לא עונים");
+  const saved = await r.sIsMember("wa:contacts", jid) || (replyJid !== jid && await r.sIsMember("wa:contacts", replyJid));
+  if (saved && !(await r.get("wa:answerContacts"))) return activity(userId, name, "שמור/ה באנשי הקשר — הבוט לא ענה");
+  if (!saved && !(await r.get("wa:contacts:synced"))) return activity(userId, name, "אנשי הקשר עוד לא סונכרנו — לא ענה");
+  if (!text && !isAudio) return activity(userId, name, "הודעה בלי טקסט (תמונה/מדבקה) — לא ענה");
+
+  if (OPT_OUT.test(text)) {
+    await r.sAdd("wa:optout", userId);
+    const sent = await sock.sendMessage(replyJid, { text: "הוסרת 🙏 לא יישלחו אלייך הודעות נוספות מהבוט." });
+    if (sent?.key?.id) sentByBot.add(sent.key.id);
+    return activity(userId, name, "ביקש/ה להסיר — הוסר/ה");
+  }
 
   await sock.readMessages([m.key]).catch(() => {});
   await sock.sendPresenceUpdate("composing", replyJid).catch(() => {});
@@ -133,7 +151,10 @@ async function handle(m) {
   }
   await sock.sendPresenceUpdate("paused", replyJid).catch(() => {});
   if (sentByBot.size > 500) sentByBot.clear();
-  console.log(`[wa] ענה לפונה ${userId.slice(0, 5)}… (${(out.replies || []).length} הודעות)`);
+  await activity(userId, name, out.skipped === "paused" ? "השיחה מושהית (את ענית / הועבר אלייך) — לא ענה"
+    : out.skipped === "global-pause" ? "הבוט מושהה כללית — לא ענה"
+    : out.skipped === "duplicate" ? "הודעה כפולה — דילג"
+    : `ענה (${(out.replies || []).length} הודעות)`);
 }
 
 async function start() {
@@ -180,10 +201,15 @@ async function start() {
   });
 
   sock.ev.on("messages.upsert", async ({ messages, type }) => {
-    if (type !== "notify") return;
+    // הודעות שהגיעו בזמן התחברות מחדש עלולות להגיע כ-append — עונים להן אם הן מהדקות האחרונות
+    const fresh = (m) => Date.now() / 1000 - Number(m.messageTimestamp || 0) < 600;
     for (const m of messages) {
+      if (type !== "notify" && (m?.key?.fromMe || !fresh(m))) continue;
       if (m?.key?.id && m.message) { msgStore.set(m.key.id, m.message); if (msgStore.size > 1000) msgStore.delete(msgStore.keys().next().value); }
-      try { await handle(m); } catch (e) { console.error("[wa] שגיאה בטיפול בהודעה:", e.message); }
+      try { await handle(m); } catch (e) {
+        console.error("[wa] שגיאה בטיפול בהודעה:", e.message);
+        await r.lPush("wa:log", JSON.stringify({ t: Date.now(), who: "", name: "", action: "שגיאה: " + e.message })).catch(() => {});
+      }
     }
   });
 }

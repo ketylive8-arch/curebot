@@ -68,7 +68,7 @@ export default function Admin() {
   const [open, setOpen] = useState<{ meta: Conv; history: ChatMsg[] } | null>(null);
   const [err, setErr] = useState("");
   const [onlyPhone, setOnlyPhone] = useState(false);
-  const [wa, setWa] = useState<{ status: string; qrDataUrl?: string; pairingCode?: string; me?: string; lastEvent?: string; contacts?: number; stale?: boolean } | null>(null);
+  const [wa, setWa] = useState<{ status: string; qrDataUrl?: string; pairingCode?: string; me?: string; lastEvent?: string; contacts?: number; stale?: boolean; answerContacts?: boolean; log?: { t: number; who: string; name: string; action: string }[] } | null>(null);
   const [waPhone, setWaPhone] = useState("0543032349");
   const [waConfirmLogout, setWaConfirmLogout] = useState(false);
 
@@ -149,6 +149,13 @@ export default function Admin() {
     return () => clearInterval(t);
   }, [key]);
 
+  async function setAnswerContacts(on: boolean) {
+    setWa((w) => (w ? { ...w, answerContacts: on } : w));
+    await fetch(`/api/admin/wa?key=${encodeURIComponent(key)}`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "contacts", on }),
+    });
+  }
+
   async function waAction(action: "pair" | "logout") {
     const phone = "972" + waPhone.replace(/\D/g, "").replace(/^0/, "").replace(/^972/, "");
     await fetch(`/api/admin/wa?key=${encodeURIComponent(key)}`, {
@@ -222,8 +229,22 @@ export default function Admin() {
           </div>
           {wa.status === "connected" && (
             <div style={{ fontSize: 14, lineHeight: 1.6 }}>
-              המספר {pretty(wa.me)} מחובר. הבוט עונה רק למי שלא שמור באנשי הקשר שלך{wa.contacts ? ` (${wa.contacts} אנשי קשר מוגנים)` : ""}, לא בקבוצות.
-              כשאת עונה בעצמך — הוא שותק בשיחה 12 שעות.
+              המספר {pretty(wa.me)} מחובר. {wa.answerContacts ? "הבוט עונה לכל מי שכותב לך בפרטי" : "הבוט עונה רק למי שלא שמור באנשי הקשר שלך"}{!wa.answerContacts && wa.contacts ? ` (${wa.contacts} אנשי קשר מוגנים)` : ""}, לא בקבוצות.
+              כשאת עונה בעצמך — הוא שותק בשיחה 12 שעות. מי שכותב "הסר" — מוסר ולא מקבל יותר הודעות.
+              <label style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8, cursor: "pointer" }}>
+                <input type="checkbox" checked={!!wa.answerContacts} onChange={(e) => setAnswerContacts(e.target.checked)} style={{ width: 18, height: 18 }} />
+                לענות גם לאנשי קשר שמורים (למשל מטופלים קיימים)
+              </label>
+              {!!wa.log?.length && (
+                <div style={{ marginTop: 10, borderTop: "1px solid #eee5d6", paddingTop: 8 }}>
+                  <div style={{ fontWeight: 700, marginBottom: 4 }}>הודעות פרטיות אחרונות שנכנסו</div>
+                  {wa.log.slice(0, 8).map((l, i) => (
+                    <div key={i} style={{ fontSize: 13, color: l.action.startsWith("ענה") ? "#2e7d4f" : "#8a5a2f" }}>
+                      {when(l.t)} · {l.name || pretty(l.who) || "—"}{l.name && l.who ? ` (${pretty(l.who)})` : ""} · {l.action}
+                    </div>
+                  ))}
+                </div>
+              )}
               <div style={{ marginTop: 8 }}>
                 {!waConfirmLogout
                   ? <button onClick={() => setWaConfirmLogout(true)} style={{ ...btn, background: "#efe7d6" }}>ניתוק</button>
