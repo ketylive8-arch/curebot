@@ -3,6 +3,7 @@ import { start, state, logout, getSock } from "./whatsapp.js";
 import { stats, diagnoseOpenAI, recentActivity, thinkAsOwner } from "./brain.js";
 import { mountCloud, cloudState } from "./cloud.js";
 import { handleCommand, ownerContext, OWNER_SYSTEM, localManageReply } from "./owner.js";
+import { listClients, upcomingAppointments, summary } from "./office.js";
 
 // ── יציבות: לעולם לא לתת לתהליך למות משגיאה בודדת. ──
 // Baileys/הצפנת וואטסאפ זורקים לפעמים שגיאות stream/פענוח שהפילו את כל
@@ -67,7 +68,18 @@ app.post("/api/logout", async (_req, res) => {
 
 // פעילות הסוכן — לידים חמים, התראות, מונים — לקונסולת הניהול.
 app.get("/api/activity", (_req, res) => {
-  try { res.json(recentActivity()); }
+  try { res.json({ ...recentActivity(), office: summary() }); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// המשרד — לקוחות ופגישות, נשמרים על הדיסק.
+app.get("/api/clients", (_req, res) => {
+  try { res.json(listClients(50)); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get("/api/appointments", (_req, res) => {
+  try { res.json(upcomingAppointments(20)); }
   catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -161,6 +173,16 @@ const PAGE = `<!doctype html>
  </div>
 
  <div class="panel">
+  <h2>יומן פגישות</h2>
+  <div id="appts"><div class="empty">טוען…</div></div>
+ </div>
+
+ <div class="panel">
+  <h2>לקוחות במשרד</h2>
+  <div id="clients"><div class="empty">טוען…</div></div>
+ </div>
+
+ <div class="panel">
   <h2>צ'אט ניהול · דברי עם הסוכן</h2>
   <div class="chat" id="chat"></div>
   <div class="row">
@@ -201,6 +223,16 @@ async function tick(){
   const el=document.getElementById("leads");
   if(!a.flagged||!a.flagged.length){el.innerHTML='<div class="empty">אין כרגע לידים שדורשים התייחסות אישית.</div>';}
   else{el.innerHTML=a.flagged.slice(0,12).map(f=>'<div class="lead"><span class="who">'+(f.alert?"🔴 ":"🟡 ")+esc(f.from)+'</span> <span class="txt">"'+esc((f.text||"").slice(0,80))+'"</span></div>').join("");}
+ }catch(e){}
+ try{
+  const ap=await (await fetch(q("/appointments"))).json();
+  document.getElementById("appts").innerHTML=ap.length
+   ?ap.slice(0,8).map(x=>'<div class="lead"><span class="who">📅 '+esc(x.whenLabel)+'</span> <span class="txt">'+esc(x.name||x.phone)+'</span></div>').join("")
+   :'<div class="empty">אין פגישות ביומן.</div>';
+  const cl=await (await fetch(q("/clients"))).json();
+  document.getElementById("clients").innerHTML=cl.length
+   ?cl.slice(0,10).map(c=>'<div class="lead"><span class="who">'+(c.alert?"🔴 ":c.needsYou?"🟡 ":"")+esc(c.name||c.phone)+'</span> <span class="txt">'+esc(c.stageLabel)+' · "'+esc((c.lastText||"").slice(0,70))+'"</span></div>').join("")
+   :'<div class="empty">עוד אין לקוחות. כל פנייה חדשה תיפתח כאן אוטומטית.</div>';
  }catch(e){}
 }
 

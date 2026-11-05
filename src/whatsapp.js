@@ -15,7 +15,8 @@ import path from "path";
 import { think, thinkAsOwner, isPaused, pause, isGloballyPaused, countHandled, flag } from "./brain.js";
 import { INFO_CARD } from "./prompt.js";
 import { transcribe } from "./transcribe.js";
-import { handleCommand, ownerContext, OWNER_SYSTEM } from "./owner.js";
+import { handleCommand, ownerContext, OWNER_SYSTEM, localManageReply } from "./owner.js";
+import { recordInbound } from "./office.js";
 
 const AUTH_DIR = process.env.AUTH_DIR || path.join(process.cwd(), "data", "auth");
 const OWNER = (process.env.OWNER_NUMBER || "").replace(/\D/g, ""); // לדוגמה 972543032349
@@ -292,9 +293,12 @@ async function handleMessage(m) {
     await sock.sendPresenceUpdate("composing", replyJid);
 
     const cmd = await handleCommand(text.trim(), sock);
-    const reply = cmd !== null
-      ? cmd
-      : await thinkAsOwner(jid, text.trim(), OWNER_SYSTEM, ownerContext());
+    let reply = cmd;
+    if (reply === null) {
+      reply = await thinkAsOwner(jid, text.trim(), OWNER_SYSTEM, ownerContext());
+      // בלי קרדיט ב-OpenAI — עוברים למענה הניהולי המקומי, כדי שלא יישאר בלי תשובה.
+      if (!reply || reply.includes("לא הצלחתי")) reply = localManageReply(text.trim());
+    }
 
     await sock.sendPresenceUpdate("paused", replyJid);
     await safeSend(replyJid, jid, { text: reply });
@@ -342,6 +346,9 @@ async function handleMessage(m) {
   console.log("[wa] ✅ נשלחה תשובה ל:", sentTo);
   state.handled++;
   countHandled();
+
+  // רשומת לקוח במשרד — נשמרת על הדיסק, כך שהפנייה לא נעלמת בהפעלה מחדש.
+  recordInbound(phoneDigits || jid.split("@")[0], m.pushName, text.trim(), out);
 
   // כרטיס המידע כבר לא נשלח כהודעה נפרדת — התשובה עצמה כוללת את הקישור,
   // כדי שלא תישלח "אותה הודעה פעמיים".

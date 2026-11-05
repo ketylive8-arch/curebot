@@ -1,4 +1,5 @@
 import { recentActivity, pauseAll, isGloballyPaused, pause, resetChat } from "./brain.js";
+import { listClients, clientCard, setStage, addAppointment, parseWhen, upcomingAppointments, summary } from "./office.js";
 
 export const OWNER_SYSTEM = `את/ה העוזר/ת האישי/ת של קטי שגב, מנהלת הקליניקה CURE MINDSET.
 קטי מדברת אלייך בוואטסאפ, לרוב בהודעה קולית שתומללה, ולכן הטקסט שאת/ה מקבל/ת עשוי להיות מדובר, לא ערוך, ועם שגיאות תמלול. הבן/י את הכוונה, אל תתקן/י אותה.
@@ -14,7 +15,8 @@ export const OWNER_SYSTEM = `את/ה העוזר/ת האישי/ת של קטי ש�
 אם היא מבקשת פעולה שאין לך — תגיד/י בקצרה מה כן אפשר.
 
 הפקודות הישירות שהמערכת מבינה בלי לעבור דרכך, וכדאי להזכיר אותן כשרלוונטי:
-"סטטוס" · "לידים" · "השהה" · "המשך" · "שלח ל0501234567: הטקסט"`;
+"סטטוס" · "לידים" · "לקוחות" · "לקוח 0501234567" · "שלב 0501234567 פגישה" ·
+"פגישה 0501234567 מחר 10:00" · "פגישות" · "השהה" · "המשך" · "שלח ל0501234567: הטקסט"`;
 
 /**
  * פקודות שמטופלות בקוד ולא עוברות למודל — מהיר ואמין.
@@ -25,13 +27,17 @@ export async function handleCommand(text, sock) {
 
   if (/^(סטטוס|status)$/i.test(t)) {
     const a = recentActivity();
+    const o = summary();
     return (
       `סטטוס הסוכן\n` +
       `${isGloballyPaused() ? "⏸ מושהה" : "▶️ פעיל"}\n\n` +
       `שיחות פעילות: ${a.activeChats}\n` +
       `הודעות שנענו: ${a.handled}\n` +
       `לידים חמים היום: ${a.hot}\n` +
-      `התראות מצוקה: ${a.alerts}`
+      `התראות מצוקה: ${a.alerts}\n\n` +
+      `במשרד: ${o.clients} לקוחות · ${o.newClients} חדשים · ${o.meetings} בפגישה · ${o.closed} סגורים\n` +
+      `פגישות קרובות: ${o.appointments}\n` +
+      `מחכים לך: ${o.waiting}`
     );
   }
 
@@ -45,6 +51,47 @@ export async function handleCommand(text, sock) {
         .map(f => `${f.alert ? "🔴" : "🟡"} ${f.from}\n"${f.text.slice(0, 70)}"`)
         .join("\n\n")
     );
+  }
+
+  // ── המשרד: לקוחות ופגישות ──
+
+  if (/^(לקוחות|clients)$/i.test(t)) {
+    const list = listClients(12);
+    if (!list.length) return "עוד אין לקוחות במשרד. כל פנייה חדשה תיפתח כאן אוטומטית.";
+    return (
+      `הלקוחות האחרונים (${list.length}):\n\n` +
+      list
+        .map(c => `${c.alert ? "🔴" : c.needsYou ? "🟡" : "•"} ${c.name || c.phone} · ${c.stageLabel}\n   "${(c.lastText || "").slice(0, 60)}"`)
+        .join("\n")
+    );
+  }
+
+  const one = t.match(/^לקוח(?:ה)?\s+([0-9+\-\s]{9,16})$/);
+  if (one) {
+    const card = clientCard(one[1]);
+    return card || "לא מצאתי לקוח עם המספר הזה.";
+  }
+
+  const stage = t.match(/^שלב\s+([0-9+\-\s]{9,16})\s+(.+)$/);
+  if (stage) {
+    const c = setStage(stage[1], stage[2]);
+    if (c) return `✅ ${c.name || c.phone} עודכן לשלב: ${stage[2].trim()}`;
+    return "לא הצלחתי לעדכן. אפשרויות השלב: חדש / בשיחה / פגישה / לקוח.";
+  }
+
+  if (/^(פגישות|יומן|appointments)$/i.test(t)) {
+    const list = upcomingAppointments(10);
+    if (!list.length) return "אין פגישות ביומן. אפשר לכתוב: \"פגישה 0501234567 מחר 10:00\".";
+    return "הפגישות הקרובות:\n\n" + list.map(a => `📅 ${a.whenLabel} — ${a.name || a.phone}`).join("\n");
+  }
+
+  const appt = t.match(/^(?:קבע(?:י)?\s+)?פגישה\s+([0-9+\-\s]{9,16})\s+(.+)$/);
+  if (appt) {
+    const when = parseWhen(appt[2]);
+    if (!when) return "לא הבנתי מתי. אפשר למשל: \"פגישה 0501234567 מחר 10:00\".";
+    const a = addAppointment(appt[1], when, "");
+    if (!a) return "לא הצלחתי לקבוע את הפגישה.";
+    return `✅ נקבעה פגישה עם ${a.name || a.phone} ל-${when.toLocaleString("he-IL", { weekday: "short", day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" })}`;
   }
 
   if (/^(השהה|עצור|pause)$/i.test(t)) {
@@ -96,6 +143,11 @@ export function localManageReply(text) {
       "אני העוזר הניהולי שלך 💛 הנה מה שאפשר לבקש:\n" +
       "• \"סטטוס\" — מצב הסוכן ומספרים\n" +
       "• \"לידים\" — מי פנה ודורש אותך\n" +
+      "• \"לקוחות\" — כל הלקוחות והשלב שלהם\n" +
+      "• \"לקוח 0501234567\" — כרטיס לקוח מלא\n" +
+      "• \"שלב 0501234567 פגישה\" — לעדכן שלב (חדש / בשיחה / פגישה / לקוח)\n" +
+      "• \"פגישה 0501234567 מחר 10:00\" — לקבוע פגישה\n" +
+      "• \"פגישות\" — היומן הקרוב\n" +
       "• \"השהה\" / \"המשך\" — לעצור או להפעיל את המענה האוטומטי\n" +
       "• \"שלח ל0501234567: טקסט\" — לשלוח הודעה יזומה\n" +
       "• \"אפס שיחה 0501234567\" — להתחיל שיחה מחדש"
@@ -126,6 +178,8 @@ export function localManageReply(text) {
 /** ההקשר שנשלח למודל כשקטי שואלת שאלה חופשית */
 export function ownerContext() {
   const a = recentActivity();
+  const o = summary();
+  const appts = upcomingAppointments(5);
   return (
     `נתוני הסוכן ברגע זה:\n` +
     `- מצב: ${isGloballyPaused() ? "מושהה" : "פעיל"}\n` +
@@ -133,6 +187,8 @@ export function ownerContext() {
     `- הודעות שנענו: ${a.handled}\n` +
     `- לידים חמים: ${a.hot}\n` +
     `- התראות מצוקה: ${a.alerts}\n` +
+    `- לקוחות במשרד: ${o.clients} (${o.newClients} חדשים, ${o.meetings} בפגישה, ${o.closed} סגורים)\n` +
+    `- פגישות קרובות: ` + (appts.length ? appts.map(x => `${x.whenLabel} ${x.name || x.phone}`).join(" · ") : "אין") + "\n" +
     (a.flagged.length
       ? `- מסומנים: ${a.flagged.slice(0, 5).map(f => `${f.from} (${f.alert ? "מצוקה" : "ביקשו אותך"})`).join(", ")}`
       : `- אין לידים מסומנים`)

@@ -8,6 +8,7 @@
 // ============================================================
 import { think, isPaused, pause, isGloballyPaused, countHandled, flag } from "./brain.js";
 import { INFO_CARD } from "./prompt.js";
+import { recordInbound } from "./office.js";
 
 const TOKEN = process.env.WHATSAPP_TOKEN || "";
 const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID || "";
@@ -113,6 +114,7 @@ async function handleInbound(msg, contactName) {
   console.log("[cloud] ✅ נשלחה תשובה ל:", from);
   cloudState.handled++;
   countHandled();
+  recordInbound(from, contactName, text.trim(), out);
 
   // כרטיס המידע לא נשלח כהודעה נפרדת — הקישור כבר בתוך התשובה.
 
