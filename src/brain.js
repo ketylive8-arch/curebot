@@ -271,7 +271,7 @@ export async function thinkAsOwner(jid, userText, systemPrompt, context) {
  * שולח את ההודעה למודל ומחזיר תשובה מפורקת.
  * @returns {{reply:string, ended:boolean, alert:boolean, human:boolean, infoCard:boolean}}
  */
-export async function think(jid, userText) {
+export async function think(jid, userText, knowledge = null) {
   const chat = getChat(jid);
 
   const messages = [
@@ -279,10 +279,15 @@ export async function think(jid, userText) {
     { role: "user", content: userText }
   ];
 
+  // סעיפי בסיס הידע שרלוונטיים לפנייה הזו — נצמדים לפרומפט כעובדות.
+  const system = knowledge?.context
+    ? SYSTEM_PROMPT + "\n\n## חומרי ידע מהאתר — אלה העובדות שעליהן לענות\n" + knowledge.context
+    : SYSTEM_PROMPT;
+
   let raw = "";
   try {
     // עד שלושה ניסיונות, עם המתנה גדלה — מכסה תקלות רשת ועומס זמני
-    raw = await callOpenAI(SYSTEM_PROMPT, messages, { retries: 3 });
+    raw = await callOpenAI(system, messages, { retries: 3 });
   } catch (err) {
     console.error("[brain] OpenAI נכשל:", err?.message, "→ עונה במוח המקומי (CureMindset)");
     // מוח מקומי: עונה תשובה אמיתית וחמה גם בלי OpenAI, ושומר בהיסטוריית השיחה.

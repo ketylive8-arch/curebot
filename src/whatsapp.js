@@ -17,6 +17,7 @@ import { INFO_CARD } from "./prompt.js";
 import { transcribe } from "./transcribe.js";
 import { handleCommand, ownerContext, OWNER_SYSTEM, localManageReply } from "./owner.js";
 import { recordInbound } from "./office.js";
+import { routeToKnowledge } from "./knowledge.js";
 
 const AUTH_DIR = process.env.AUTH_DIR || path.join(process.cwd(), "data", "auth");
 const OWNER = (process.env.OWNER_NUMBER || "").replace(/\D/g, ""); // לדוגמה 972543032349
@@ -337,7 +338,12 @@ async function handleMessage(m) {
   await sock.readMessages([m.key]);
   await sock.sendPresenceUpdate("composing", replyJid);
 
-  const out = await think(convKey, text.trim());
+  // ניתוב הפנייה דרך בסיס הידע: מזהים על מה היא מדברת ומזריקים לפרומפט
+  // רק את סעיפי החומר הרלוונטיים. פנייה שלא מזוהה — נענית מהפרומפט הכללי.
+  const kb = routeToKnowledge(text.trim());
+  console.log(`[route] ${kb.sections.length ? kb.sections.join(",") : "כללי"} ← "${text.trim().slice(0, 50)}"`);
+
+  const out = await think(convKey, text.trim(), kb);
 
   await new Promise(r => setTimeout(r, shortDelay(out.reply)));
   await sock.sendPresenceUpdate("paused", replyJid);
