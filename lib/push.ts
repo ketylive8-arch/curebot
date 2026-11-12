@@ -26,3 +26,20 @@ export async function notifyKety(title: string, body: string, conversation?: str
     }),
   );
 }
+
+/** שליחה לרשימת מנויים כלשהי (משמש את הבוטים של הלקוחות). מנוי שפג נמחק דרך onGone. */
+export async function pushTo(subs: string[], payload: Record<string, string>, onGone: (raw: string) => Promise<void>) {
+  if (!PUB || !PRIV || !subs.length) return;
+  const data = JSON.stringify({ ...payload, body: (payload.body || "").slice(0, 160) });
+  await Promise.all(
+    subs.map(async (raw) => {
+      try {
+        await webpush.sendNotification(JSON.parse(raw), data, { TTL: 24 * 3600 });
+      } catch (e) {
+        const code = (e as { statusCode?: number }).statusCode;
+        if (code === 404 || code === 410) await onGone(raw);
+        else console.error("[push] שליחה נכשלה:", (e as Error).message);
+      }
+    }),
+  );
+}

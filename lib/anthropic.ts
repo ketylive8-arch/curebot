@@ -82,3 +82,26 @@ async function askOpenAI(messages: ChatMsg[], extraSystem?: string): Promise<str
   console.log("[openai] ענה כגיבוי ל-Claude");
   return text;
 }
+
+/** אותו מוח עם פרומפט אחר — לבוטים של לקוחות (lib/tenants.ts). זורק אם כל הניסיונות נכשלו. */
+export async function askWithSystem(system: string, messages: ChatMsg[]): Promise<string> {
+  let lastErr: unknown = null;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const resp = await client.messages.create({
+        model: MODEL,
+        max_tokens: 1024,
+        system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
+        messages: messages.map((m) => ({ role: m.role, content: m.content })),
+      });
+      const text = resp.content.filter((b): b is Anthropic.TextBlock => b.type === "text").map((b) => b.text).join("").trim();
+      if (text) return text;
+      throw new Error("empty response");
+    } catch (err) {
+      lastErr = err;
+      if (err instanceof Anthropic.BadRequestError || err instanceof Anthropic.AuthenticationError) break;
+      if (attempt < 2) await sleep(700);
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error("anthropic failed");
+}

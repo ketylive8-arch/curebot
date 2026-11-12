@@ -8,6 +8,7 @@ import { CLOSING_CARD, FALLBACK_MESSAGE } from "./prompt";
 import { notifyKety } from "./push";
 import { extractLead, prettyPhone } from "./leads";
 import { store, type ConvMeta, type ChatMsg } from "./redis";
+import { addFollowup, cancelFollowupsFor, israelNow, parseIsraelTime, prettyWhen } from "./followups";
 
 // המוח מוזרק כדי שאפשר יהיה לבדוק את הליבה בלי קריאה אמיתית ל-Claude.
 export type AskFn = (messages: ChatMsg[], extraSystem?: string) => Promise<string>;
@@ -72,6 +73,17 @@ export async function handleIncoming(msg: IncomingMessage, ask: AskFn = askClaud
     await store.pause(key, 24);
   }
 
+  // ביקש/ה שנחזור במועד מסוים — נכנס ליומן המעקבים, וקטי מקבלת התראה עכשיו ותזכורת במועד
+  if (markers.callback && msg.channel !== "demo") {
+    const due = parseIsraelTime(markers.callback);
+    if (due) {
+      const prev = (await store.getConversation(key)).meta;
+      const phone = prev?.lead?.phone || (msg.channel === "whatsapp" ? msg.userId : undefined);
+      await addFollowup({ key, kind: "callback", due, note: text.slice(0, 200), name: prev?.lead?.name || msg.name, phone });
+      notifyKety(`📅 ביקשו שתחזרי: ${prettyWhen(due)}`, text, key).catch(() => {});
+    }
+  }
+
   const flag: ConvMeta["flag"] = markers.alert
     ? "alert"
     : markers.human
@@ -119,9 +131,10 @@ async function record(msg: IncomingMessage, key: string, last: string, flag: Con
 }
 
 // הקשר לפי ערוץ: באתר אין לנו את מספר הטלפון של הפונה, ולכן מבקשים אותו בעדינות.
-function channelContext(channel: string): string | undefined {
-  if (channel !== "try") return undefined;
-  return `=== הקשר: צ'אט באתר ===
+function channelContext(channel: string): string {
+  const today = `=== היום ===\n${israelNow()} (שעון ישראל). לפי זה מחשבים תאריכים כמו "מחר" או "ביום ראשון".`;
+  if (channel !== "try") return today;
+  return `${today}\n\n=== הקשר: צ'אט באתר ===
 השיחה הזו מתקיימת בצ'אט באתר של קטי, לא בוואטסאפ. אין לך את מספר הטלפון של הפונה, ובלי פרטים קטי לא תוכל לחזור.
 - לא מבקשים פרטים בהודעה הראשונה. קודם מקשיבים ומבינים.
 - אם הפונה חרד/ה או מוצף/ת עכשיו — קודם מרגיעים (כלי הרגעה אחד), ורק אחרי שקצת נרגע/ה מבקשים פרטים. לא באמצע התקף.
@@ -171,4 +184,11 @@ async function sendToSite(lead: import("./leads").Lead, source?: string) {
     }),
   });
   console.log(`[site-lead] נשלח לאתר: HTTP ${res.status}`);
+}
+
+/** בקשת הסרה (מוואטסאפ או מהאתר): מבטלים מעקבים ומסמנים בכרטיס הליד. */
+export async function optOut(key: string) {
+  await cancelFollowupsFor(key);
+  const prev = (await store.getConversation(key)).meta;
+  if (prev) await store.recordConversation({ ...prev, flag: "ended", lead: { ...prev.lead, stage: "ביקש/ה הסרה" } });
 }

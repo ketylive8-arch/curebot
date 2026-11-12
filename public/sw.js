@@ -11,7 +11,7 @@ self.addEventListener("push", (event) => {
       lang: "he",
       tag: d.conversation || undefined,
       renotify: true,
-      data: { conversation: d.conversation || "" },
+      data: { conversation: d.conversation || "", url: d.url || "" },
     }),
   );
 });
@@ -19,6 +19,11 @@ self.addEventListener("push", (event) => {
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const conv = (event.notification.data && event.notification.data.conversation) || "";
+  const url = (event.notification.data && event.notification.data.url) || "";
+  if (url) { // התראה מבוט של לקוח — פותחים את לוח הבקרה שלו
+    event.waitUntil(clients.openWindow(url));
+    return;
+  }
   event.waitUntil(
     (async () => {
       const all = await clients.matchAll({ type: "window", includeUncontrolled: true });

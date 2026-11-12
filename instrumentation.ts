@@ -5,4 +5,6 @@ export async function register() {
   setTimeout(() => logDigest().catch((e) => console.error("[digest]", (e as Error).message)), 3000);
   const { startWaWorker } = await import("./lib/waspawn");
   setTimeout(() => startWaWorker(), 5000);
+  const { startFollowupLoop } = await import("./lib/followupLoop");
+  startFollowupLoop();
 }

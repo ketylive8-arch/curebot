@@ -133,6 +133,7 @@ async function handle(m) {
 
   if (OPT_OUT.test(text)) {
     await r.sAdd("wa:optout", userId);
+    await toCore({ type: "optout", userId }).catch(() => {});
     const sent = await sock.sendMessage(replyJid, { text: "הוסרת 🙏 לא יישלחו אלייך הודעות נוספות מהבוט." });
     if (sent?.key?.id) sentByBot.add(sent.key.id);
     return activity(userId, name, "ביקש/ה להסיר — הוסר/ה");
@@ -174,11 +175,13 @@ async function start() {
     if (qr) {
       if (state.status !== "qr") console.log("[wa] פועל — ממתין לחיבור (QR או קוד חיבור)");
       await setState({ status: "qr", qr, lastEvent: "ממתין לחיבור — סריקת QR או קוד חיבור" });
+      toCore({ type: "status", userId: "-", status: "qr" }).catch(() => {}); // התראה לקטי שצריך לחבר מחדש
     }
     if (connection === "open") {
       attempts = 0;
       await setState({ status: "connected", qr: "", pairingCode: "", me: (sock.user?.id || "").split(":")[0], lastEvent: "מחובר ועונה" });
       console.log("[wa] מחובר");
+      toCore({ type: "status", userId: "-", status: "connected" }).catch(() => {});
       // אם וואטסאפ לא שולחת רשימת אנשי קשר תוך 3 דקות — מסמנים כמסונכרן כדי לא לחסום לעד
       setTimeout(async () => { if (!(await r.get("wa:contacts:synced"))) await r.set("wa:contacts:synced", "1"); }, 180000);
     }
@@ -195,7 +198,7 @@ async function start() {
         process.exit(0);
       }
       attempts++;
-      await setState({ status: "reconnecting", lastEvent: `החיבור נפל (${code || "?"}) — מתחבר מחדש` });
+      await setState({ status: "reconnecting", pairingCode: "", lastEvent: `החיבור נפל (${code || "?"}) — מתחבר מחדש` });
       setTimeout(() => start().catch((e) => console.error("[wa]", e.message)), Math.min(30000, 2000 * attempts));
     }
   });
@@ -213,6 +216,23 @@ async function start() {
     }
   });
 }
+
+// ---------- הודעות יוצאות (פולואפים מהמשפך) ----------
+setInterval(async () => {
+  if (!sock || state.status !== "connected") return;
+  const raw = await r.rPop("wa:outbox").catch(() => null);
+  if (!raw) return;
+  const { phone, text } = JSON.parse(raw);
+  if (await r.sIsMember("wa:optout", phone)) return;
+  try {
+    const sent = await sock.sendMessage(`${phone}@s.whatsapp.net`, { text });
+    if (sent?.key?.id) sentByBot.add(sent.key.id);
+    await activity(phone, "", "נשלח פולואפ");
+  } catch (e) {
+    await r.rPush("wa:outbox", raw).catch(() => {});
+    console.error("[wa] שליחת פולואפ נכשלה:", e.message);
+  }
+}, 3000);
 
 // ---------- פקודות מלוח הבקרה ----------
 setInterval(async () => {

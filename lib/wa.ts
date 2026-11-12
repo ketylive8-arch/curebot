@@ -45,3 +45,10 @@ export async function setAnswerContacts(on: boolean) {
   if (on) await (await r).set("wa:answerContacts", "1");
   else await (await r).del("wa:answerContacts");
 }
+
+/** תור הודעות יוצאות לוואטסאפ (פולואפים). התהליך wa/worker.mjs שולח אותן. */
+export async function queueWaMessage(phone: string, text: string) {
+  const r = redis();
+  if (!r) throw new Error("no redis");
+  await (await r).lPush("wa:outbox", JSON.stringify({ phone: phone.replace(/\D/g, ""), text }));
+}

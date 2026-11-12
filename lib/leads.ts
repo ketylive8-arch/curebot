@@ -44,7 +44,7 @@ const INSTRUCTIONS = `את/ה עוזר/ת של קטי שגב (קליניקה ל�
  "summary": משפט או שניים לקטי — מה קורה ומה הצעד הבא}`;
 
 /** מעדכן כרטיס ליד מתוך השיחה. לא זורק — בכישלון מחזיר את מה שיש. */
-export async function extractLead(history: ChatMsg[], prev: Lead = {}): Promise<Lead> {
+export async function extractLead(history: ChatMsg[], prev: Lead = {}, owner?: { name: string; business: string }): Promise<Lead> {
   const userText = history.filter((m) => m.role === "user").map((m) => m.content).join("\n");
   const lead: Lead = { ...prev };
   lead.phone = findPhone(userText) || lead.phone;
@@ -54,7 +54,7 @@ export async function extractLead(history: ChatMsg[], prev: Lead = {}): Promise<
     const resp = await client.messages.create({
       model: LEAD_MODEL,
       max_tokens: 400,
-      system: INSTRUCTIONS,
+      system: owner ? INSTRUCTIONS.replace("קטי שגב (קליניקה לליווי רגשי)", `${owner.name} (${owner.business})`).replace("ביקש/ה שקטי תחזור", `ביקש/ה ש${owner.name} יחזור/תחזור`).replace("לקטי —", `ל${owner.name} —`) : INSTRUCTIONS,
       messages: [{ role: "user", content: convo }],
     });
     const raw = resp.content.filter((b): b is Anthropic.TextBlock => b.type === "text").map((b) => b.text).join("");

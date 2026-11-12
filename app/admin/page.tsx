@@ -71,6 +71,8 @@ export default function Admin() {
   const [wa, setWa] = useState<{ status: string; qrDataUrl?: string; pairingCode?: string; me?: string; lastEvent?: string; contacts?: number; stale?: boolean; answerContacts?: boolean; log?: { t: number; who: string; name: string; action: string }[] } | null>(null);
   const [waPhone, setWaPhone] = useState("0543032349");
   const [waConfirmLogout, setWaConfirmLogout] = useState(false);
+  const [autoPaired, setAutoPaired] = useState(false);
+  const [fus, setFus] = useState<{ id: string; key: string; kind: string; due: number; note: string; name?: string; phone?: string; status: string; result?: string }[]>([]);
 
   const [pushState, setPushState] = useState<"" | "on" | "busy" | "denied" | "unsupported" | "ios-install">("");
   const [pendingConv, setPendingConv] = useState("");
@@ -149,6 +151,22 @@ export default function Admin() {
     return () => clearInterval(t);
   }, [key]);
 
+  // כשהוואטסאפ מנותק — מבקשים קוד חיבור מיד, כדי שקטי רק תקליד אותו בטלפון
+  useEffect(() => {
+    if (wa?.status === "qr" && !wa.pairingCode && !autoPaired && key) { setAutoPaired(true); waAction("pair"); }
+  }, [wa?.status, wa?.pairingCode, autoPaired, key]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const loadFus = useCallback(async () => {
+    if (!key) return;
+    try { const r = await fetch(`/api/admin/followups?key=${encodeURIComponent(key)}`); if (r.ok) setFus((await r.json()).followups || []); } catch {}
+  }, [key]);
+  useEffect(() => { loadFus(); const t = setInterval(loadFus, 30000); return () => clearInterval(t); }, [loadFus]);
+
+  async function fuAction(body: Record<string, unknown>) {
+    await fetch(`/api/admin/followups?key=${encodeURIComponent(key)}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    loadFus();
+  }
+
   async function setAnswerContacts(on: boolean) {
     setWa((w) => (w ? { ...w, answerContacts: on } : w));
     await fetch(`/api/admin/wa?key=${encodeURIComponent(key)}`, {
@@ -223,7 +241,10 @@ export default function Admin() {
 
 
       {wa && wa.status !== "off" && (
-        <div style={{ ...card, borderColor: wa.status === "connected" ? "#9fd3b0" : "#e6c99a" }}>
+        <div style={{ ...card, borderColor: wa.status === "connected" ? "#9fd3b0" : "#c65b4e", background: wa.status === "connected" ? "#fff" : "#fdf0ee" }}>
+          {wa.status !== "connected" && (
+            <div style={{ fontWeight: 800, color: "#c65b4e", marginBottom: 6 }}>⚠️ הבוט לא מחובר לוואטסאפ ולא עונה לפונים. מחברים פעם אחת עם הקוד למטה.</div>
+          )}
           <div style={{ fontWeight: 800, marginBottom: 6 }}>
             וואטסאפ {wa.status === "connected" ? "· ✅ מחובר ועונה" : wa.status === "qr" ? "· ממתין לחיבור" : "· " + (wa.lastEvent || wa.status)}
           </div>
@@ -235,16 +256,7 @@ export default function Admin() {
                 <input type="checkbox" checked={!!wa.answerContacts} onChange={(e) => setAnswerContacts(e.target.checked)} style={{ width: 18, height: 18 }} />
                 לענות גם לאנשי קשר שמורים (למשל מטופלים קיימים)
               </label>
-              {!!wa.log?.length && (
-                <div style={{ marginTop: 10, borderTop: "1px solid #eee5d6", paddingTop: 8 }}>
-                  <div style={{ fontWeight: 700, marginBottom: 4 }}>הודעות פרטיות אחרונות שנכנסו</div>
-                  {wa.log.slice(0, 8).map((l, i) => (
-                    <div key={i} style={{ fontSize: 13, color: l.action.startsWith("ענה") ? "#2e7d4f" : "#8a5a2f" }}>
-                      {when(l.t)} · {l.name || pretty(l.who) || "—"}{l.name && l.who ? ` (${pretty(l.who)})` : ""} · {l.action}
-                    </div>
-                  ))}
-                </div>
-              )}
+
               <div style={{ marginTop: 8 }}>
                 {!waConfirmLogout
                   ? <button onClick={() => setWaConfirmLogout(true)} style={{ ...btn, background: "#efe7d6" }}>ניתוק</button>
@@ -276,6 +288,33 @@ export default function Admin() {
               )}
             </div>
           )}
+        </div>
+      )}
+
+      {!!wa?.log?.length && (
+        <div style={card}>
+          <div style={{ fontWeight: 800, marginBottom: 4 }}>הודעות וואטסאפ פרטיות אחרונות</div>
+          {wa.log.slice(0, 8).map((l, i) => (
+            <div key={i} style={{ fontSize: 13, color: l.action.startsWith("ענה") || l.action.startsWith("נשלח") ? "#2e7d4f" : "#8a5a2f" }}>
+              {when(l.t)} · {l.name || pretty(l.who) || "—"}{l.name && l.who ? ` (${pretty(l.who)})` : ""} · {l.action}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {fus.some((f) => f.status === "pending") && (
+        <div style={{ ...card, background: "#f3f6f2" }}>
+          <div style={{ fontWeight: 800, marginBottom: 6 }}>📅 מעקבים מתוכננים</div>
+          {fus.filter((f) => f.status === "pending").map((f) => (
+            <div key={f.id} style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center", flexWrap: "wrap", fontSize: 14, padding: "4px 0", borderTop: "1px solid #e2ece2" }}>
+              <span>
+                <b>{new Date(f.due).toLocaleString("he-IL", { weekday: "short", day: "numeric", month: "numeric", hour: "2-digit", minute: "2-digit" })}</b>
+                {" · "}{f.kind === "callback" ? "לחזור ל" : "פולואפ להצעה ל"}{f.name || pretty(f.phone) || "פונה"}
+                {f.note && <span style={{ color: "#6b6560" }}> · "{f.note.slice(0, 60)}"</span>}
+              </span>
+              <button onClick={() => fuAction({ id: f.id, action: "cancel" })} style={{ ...btn, background: "#efe7d6" }}>ביטול</button>
+            </div>
+          ))}
         </div>
       )}
 
@@ -311,6 +350,9 @@ export default function Admin() {
             {c.lead?.phone && <a href={waHref(c.lead)} target="_blank" rel="noopener noreferrer" style={{ ...btn, background: "#25d366", color: "#fff", textDecoration: "none" }}>💬 וואטסאפ</a>}
             {c.lead?.phone && <a href={`tel:+${c.lead.phone}`} style={{ ...btn, background: "#2b2723", color: "#fff", textDecoration: "none" }}>📞 חיוג</a>}
             <button onClick={() => view(c)} style={{ ...btn, background: "#efe7d6" }}>השיחה המלאה</button>
+            {c.channel !== "demo" && !fus.some((f) => f.key === c.key && f.kind === "offer" && f.status === "pending") && (
+              <button onClick={() => fuAction({ key: c.key, days: 7 })} style={{ ...btn, background: "#e9f1e6" }}>📨 נשלחה הצעה · פולואפ בעוד שבוע</button>
+            )}
             <button onClick={() => togglePause(c)} style={{ ...btn, background: c.paused ? "#2e9e5b" : "#e0d6c4", color: c.paused ? "#fff" : "#2b2723" }}>
               {c.paused ? "המשך בוט" : "השהה בוט"}
             </button>
