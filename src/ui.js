@@ -52,7 +52,7 @@ p.lead{color:var(--muted);font-size:18px;margin:0 0 32px;max-width:52ch}
 :focus-visible{outline:3px solid var(--gold);outline-offset:3px;border-radius:12px}
 label{display:block;font-size:15px;font-weight:500;margin:0 0 8px}
 .hint{display:block;color:var(--muted);font-size:14px;font-weight:400;margin-top:4px}
-input[type=text],input[type=tel],input[type=password]{width:100%;min-height:52px;border:1px solid var(--line);background:var(--surface);border-radius:14px;padding:0 16px;font:inherit;color:var(--ink)}
+input:not([type=checkbox]):not([type=radio]){width:100%;min-height:52px;border:1px solid var(--line);background:var(--surface);border-radius:14px;padding:0 16px;font:inherit;color:var(--ink)}
 input:focus{border-color:var(--gold);background:#fff;outline:none;box-shadow:0 0 0 4px var(--gold-soft)}
 .code-input{text-align:center;letter-spacing:.4em;font-size:24px!important;font-weight:500}
 .field{margin-bottom:20px}
