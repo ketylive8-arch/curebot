@@ -1,7 +1,7 @@
 {
   "name": "curebot-whatsapp",
   "version": "1.0.0",
-  "description": "CureBot — סוכן מענה בוואטסאפ ל-CURE MINDSET. התחברות בסריקת QR.",
+  "description": "CureBot — מערכת חיבורי וואטסאפ מרובת משתמשים ל-CURE MINDSET. חיבור בסריקת QR, ניהול בקישור וקוד.",
   "type": "module",
   "main": "src/server.js",
   "engines": {

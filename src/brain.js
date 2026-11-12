@@ -133,194 +133,139 @@ function localReply(userText, chat) {
   ])));
 }
 
+// ── OpenAI (אופציונלי) ──
+// אין "OpenAI חינמי" ל-API: בלי קרדיט OpenAI מחזיר 429. לכן המערכת עובדת כברירת מחדל
+// במצב "טקסטים" — המנוע המקומי בשיטת CureMindset (חינמי, בלי מפתח). אם יש מפתח עם
+// קרדיט, היא עוברת לבד ל-OpenAI. "מפסק" (circuit breaker): אחרי כשל קרדיט/מפתח לא
+// מנסים שוב 30 דקות — כדי שכל הודעה לא תחכה לכשל לפני שהיא עונה.
 const API_KEY = process.env.OPENAI_API_KEY;
-const MODEL = process.env.MODEL || "gpt-4o-mini";
+const MODEL = process.env.MODEL && /^gpt|^o\d/i.test(process.env.MODEL) ? process.env.MODEL : "gpt-4o-mini";
+const AI_MODE = (process.env.AI_MODE || "auto").toLowerCase(); // auto | texts
+const ai = { downUntil: 0, reason: API_KEY ? "" : "no-key" };
 
-// זיכרון שיחה בזיכרון התהליך: 10 הודעות אחרונות לכל פונה, פג אחרי 48 שעות.
-const chats = new Map();
-const MAX_TURNS = 10;
-const TTL_MS = 48 * 60 * 60 * 1000;
-
-function getChat(jid) {
-  const now = Date.now();
-  for (const [k, v] of chats) if (now - v.updated > TTL_MS) chats.delete(k);
-  if (!chats.has(jid)) chats.set(jid, { history: [], updated: now, pausedUntil: 0, infoSent: false });
-  return chats.get(jid);
+export function aiState() {
+  if (AI_MODE === "texts") return { mode: "texts", reason: "forced" };
+  if (!API_KEY) return { mode: "texts", reason: "no-key" };
+  if (ai.downUntil > Date.now()) return { mode: "texts", reason: ai.reason || "unavailable" };
+  return { mode: "openai", reason: "" };
 }
 
-export function isPaused(jid) {
-  return getChat(jid).pausedUntil > Date.now();
+function tripBreaker(message) {
+  const m = String(message || "");
+  const reason = /insufficient_quota|no credits|billing|\b429\b/i.test(m) ? "no-credit"
+    : /\b401\b|invalid_api_key|Incorrect API key/i.test(m) ? "bad-key" : "error";
+  ai.reason = reason;
+  ai.downUntil = Date.now() + (reason === "error" ? 2 : 30) * 60 * 1000;
+  console.log(`[brain] OpenAI לא זמין (${reason}) — עונים במנוע הטקסטים`);
 }
 
-export function pause(jid, hours = 12) {
-  getChat(jid).pausedUntil = Date.now() + hours * 3600 * 1000;
-}
-
-export function resetChat(jid) {
-  chats.delete(jid);
-}
-
-let globalPause = false;
-let handled = 0;
-const flagged = [];   // לידים חמים והתראות מצוקה
-
-export function pauseAll(v) { globalPause = v; }
-export function isGloballyPaused() { return globalPause; }
-export function countHandled() { handled++; }
-
-export function flag(from, text, alert) {
-  flagged.unshift({ from, text, alert, at: Date.now() });
-  if (flagged.length > 30) flagged.pop();
-}
-
-export function stats() {
-  return { activeChats: chats.size, handled };
-}
-
-export function recentActivity() {
-  const day = Date.now() - 24 * 3600 * 1000;
-  const recent = flagged.filter(f => f.at > day);
-  return {
-    activeChats: chats.size,
-    handled,
-    hot: recent.filter(f => !f.alert).length,
-    alerts: recent.filter(f => f.alert).length,
-    flagged: recent
-  };
-}
-
-// ── אבחון OpenAI: בודק לאיזה ארגון/פרויקט שייך המפתח והאם יש קרדיט.
-// רץ פעם אחת בעליית השרת, ומדפיס ללוג תמונה מדויקת כדי לאתר את בעיית הקרדיט.
 export async function diagnoseOpenAI() {
-  if (!API_KEY) { console.log("[diag] ⚠️ אין OPENAI_API_KEY מוגדר"); return; }
-  console.log(`[diag] מפתח OpenAI מוגדר (מסתיים ב-...${API_KEY.slice(-4)}), מודל:${MODEL}`);
-  try {
-    const r = await fetch("https://api.openai.com/v1/models", { headers: { Authorization: `Bearer ${API_KEY}` } });
-    console.log(`[diag] models: HTTP ${r.status} | org:${r.headers.get("openai-organization")} | project:${r.headers.get("openai-project")}`);
-  } catch (e) { console.log("[diag] models שגיאה:", e.message); }
+  if (!API_KEY) { console.log("[diag] אין OPENAI_API_KEY — עובדים במצב טקסטים (חינמי)"); return; }
   try {
     const r = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: { Authorization: `Bearer ${API_KEY}`, "Content-Type": "application/json" },
       body: JSON.stringify({ model: MODEL, max_tokens: 1, messages: [{ role: "user", content: "hi" }] })
     });
-    const b = await r.text();
-    if (r.ok) console.log("[diag] ✅ בדיקת שיחה הצליחה — יש קרדיט, OpenAI פעיל!");
-    else console.log(`[diag] ❌ בדיקת שיחה נכשלה: HTTP ${r.status} | ${b.slice(0, 220)}`);
-  } catch (e) { console.log("[diag] completion שגיאה:", e.message); }
+    if (r.ok) { ai.downUntil = 0; console.log("[diag] ✅ OpenAI פעיל — יש קרדיט"); }
+    else { const b = await r.text(); tripBreaker(`${r.status} ${b}`); console.log(`[diag] OpenAI: HTTP ${r.status} | ${b.slice(0, 160)}`); }
+  } catch (e) { console.log("[diag] OpenAI שגיאה:", e.message); }
 }
 
-// ── קריאה ל-OpenAI (Chat Completions) ──
-async function callOpenAI(systemPrompt, messages, { retries = 1 } = {}) {
-  let lastError = null;
-  for (let attempt = 1; attempt <= retries; attempt++) {
-    try {
-      const res = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${API_KEY}`
-        },
-        body: JSON.stringify({
-          model: MODEL,
-          max_tokens: 600,
-          temperature: 0.7,
-          messages: [{ role: "system", content: systemPrompt }, ...messages]
-        })
-      });
-
-      if (!res.ok) {
-        const body = await res.text();
-        throw new Error(`HTTP ${res.status}: ${body.slice(0, 300)}`);
-      }
-
-      const data = await res.json();
-      const text = (data.choices?.[0]?.message?.content || "").trim();
-      if (text) return text;
-      throw new Error("empty response");
-    } catch (err) {
-      lastError = err;
-      console.error(`[brain] ניסיון ${attempt} נכשל:`, err.message);
-      if (attempt < retries) await new Promise(r => setTimeout(r, attempt * 1500));
-    }
-  }
-  throw lastError || new Error("openai failed");
-}
-
-/** שיחה עם קטי עצמה — פרומפט אחר, בלי הסמנים של הלידים */
-export async function thinkAsOwner(jid, userText, systemPrompt, context) {
-  const chat = getChat(jid);
-  const messages = [...chat.history, { role: "user", content: userText }];
-
+async function callOpenAI(systemPrompt, messages) {
+  if (aiState().mode !== "openai") throw new Error("openai-skipped");
   try {
-    const reply = await callOpenAI(systemPrompt + "\n\n" + context, messages, { retries: 2 });
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${API_KEY}` },
+      body: JSON.stringify({ model: MODEL, max_tokens: 600, temperature: 0.7, messages: [{ role: "system", content: systemPrompt }, ...messages] })
+    });
+    if (!res.ok) { const body = await res.text(); throw new Error(`HTTP ${res.status}: ${body.slice(0, 300)}`); }
+    const data = await res.json();
+    const text = (data.choices?.[0]?.message?.content || "").trim();
+    if (!text) throw new Error("empty response");
+    return text;
+  } catch (err) {
+    if (err.message !== "openai-skipped") tripBreaker(err.message);
+    throw err;
+  }
+}
 
+const MAX_TURNS = 10;
+const TTL_MS = 48 * 60 * 60 * 1000;
+
+/**
+ * מוח נפרד לכל חיבור וואטסאפ (כל משתמש/ת במערכת): זיכרון שיחות, השהיות, מונים ולידים
+ * משלו — כך שני חיבורים לעולם לא מתערבבים.
+ */
+export function createBrain() {
+  const chats = new Map();
+  let globalPause = false;
+  let handled = 0;
+  const flagged = [];
+
+  function getChat(jid) {
+    const now = Date.now();
+    for (const [k, v] of chats) if (now - v.updated > TTL_MS) chats.delete(k);
+    if (!chats.has(jid)) chats.set(jid, { history: [], updated: now, pausedUntil: 0, infoSent: false });
+    return chats.get(jid);
+  }
+  function remember(chat, userText, reply) {
     chat.history.push({ role: "user", content: userText });
     chat.history.push({ role: "assistant", content: reply });
     if (chat.history.length > MAX_TURNS * 2) chat.history = chat.history.slice(-MAX_TURNS * 2);
     chat.updated = Date.now();
-
-    return reply || "לא הצלחתי לנסח תשובה, תנסי שוב.";
-  } catch (e) {
-    console.error("[brain owner]", e.message);
-    return "רגע, לא הצלחתי להשלים את זה. תנסי שוב בעוד רגע 🙏";
-  }
-}
-
-/**
- * שולח את ההודעה למודל ומחזיר תשובה מפורקת.
- * @returns {{reply:string, ended:boolean, alert:boolean, human:boolean, infoCard:boolean}}
- */
-export async function think(jid, userText) {
-  const chat = getChat(jid);
-
-  const messages = [
-    ...chat.history,
-    { role: "user", content: userText }
-  ];
-
-  let raw = "";
-  try {
-    // עד שלושה ניסיונות, עם המתנה גדלה — מכסה תקלות רשת ועומס זמני
-    raw = await callOpenAI(SYSTEM_PROMPT, messages, { retries: 3 });
-  } catch (err) {
-    console.error("[brain] OpenAI נכשל:", err?.message, "→ עונה במוח המקומי (CureMindset)");
-    // מוח מקומי: עונה תשובה אמיתית וחמה גם בלי OpenAI, ושומר בהיסטוריית השיחה.
-    const local = localReply(userText, chat);
-    // כרטיס המידע נשלח פעם אחת בלבד לכל שיחה — שלא יחזור אחרי כל הודעה.
-    if (local.infoCard && chat.infoSent) local.infoCard = false;
-    else if (local.infoCard) chat.infoSent = true;
-    chat.history.push({ role: "user", content: userText });
-    chat.history.push({ role: "assistant", content: local.reply });
-    if (chat.history.length > MAX_TURNS * 2) chat.history = chat.history.slice(-MAX_TURNS * 2);
-    chat.updated = Date.now();
-    return local;
   }
 
-  const ended = raw.includes("[[END]]");
-  const alert = raw.includes("[[ALERT]]");
-  const human = raw.includes("[[HUMAN]]");
+  const brain = {
+    isPaused: (jid) => getChat(jid).pausedUntil > Date.now(),
+    pause: (jid, hours = 12) => { getChat(jid).pausedUntil = Date.now() + hours * 3600 * 1000; },
+    resetChat: (jid) => { chats.delete(jid); },
+    pauseAll: (v) => { globalPause = !!v; },
+    isGloballyPaused: () => globalPause,
+    countHandled: () => { handled++; },
+    flag(from, text, alert) {
+      flagged.unshift({ from, text, alert, at: Date.now() });
+      if (flagged.length > 30) flagged.pop();
+    },
+    stats: () => ({ activeChats: chats.size, handled }),
+    recentActivity() {
+      const day = Date.now() - 24 * 3600 * 1000;
+      const recent = flagged.filter(f => f.at > day);
+      return { activeChats: chats.size, handled, hot: recent.filter(f => !f.alert).length, alerts: recent.filter(f => f.alert).length, flagged: recent };
+    },
 
-  const reply = raw
-    .replace(/\[\[END\]\]/g, "")
-    .replace(/\[\[ALERT\]\]/g, "")
-    .replace(/\[\[HUMAN\]\]/g, "")
-    .trim();
+    async thinkAsOwner(jid, userText, systemPrompt, context) {
+      const chat = getChat(jid);
+      try {
+        const reply = await callOpenAI(systemPrompt + "\n\n" + context, [...chat.history, { role: "user", content: userText }]);
+        remember(chat, userText, reply);
+        return reply;
+      } catch { return null; }
+    },
 
-  // שומרים בזיכרון את הטקסט הנקי בלבד
-  chat.history.push({ role: "user", content: userText });
-  chat.history.push({ role: "assistant", content: reply });
-  if (chat.history.length > MAX_TURNS * 2) {
-    chat.history = chat.history.slice(-MAX_TURNS * 2);
-  }
-  chat.updated = Date.now();
-
-  // כרטיס הסיום נשלח פעם אחת בלבד לכל שיחה
-  let infoCard = false;
-  if (ended && !chat.infoSent) {
-    infoCard = true;
-    chat.infoSent = true;
-  }
-
-  return { reply, ended, alert, human, infoCard };
+    /** @returns {{reply:string, ended:boolean, alert:boolean, human:boolean, infoCard:boolean}} */
+    async think(jid, userText) {
+      const chat = getChat(jid);
+      let raw = "";
+      try {
+        raw = await callOpenAI(SYSTEM_PROMPT, [...chat.history, { role: "user", content: userText }]);
+      } catch {
+        const local = localReply(userText, chat);
+        if (local.infoCard && chat.infoSent) local.infoCard = false;
+        else if (local.infoCard) chat.infoSent = true;
+        remember(chat, userText, local.reply);
+        return local;
+      }
+      const ended = raw.includes("[[END]]");
+      const alert = raw.includes("[[ALERT]]");
+      const human = raw.includes("[[HUMAN]]");
+      const reply = raw.replace(/\[\[(END|ALERT|HUMAN)\]\]/g, "").trim();
+      remember(chat, userText, reply);
+      let infoCard = false;
+      if (ended && !chat.infoSent) { infoCard = true; chat.infoSent = true; }
+      return { reply, ended, alert, human, infoCard };
+    }
+  };
+  return brain;
 }
