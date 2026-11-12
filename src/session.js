@@ -112,6 +112,18 @@ export class WaSession {
         this.state.lastEvent = "מחובר ועונה";
         this.reconnectAttempts = 0;
         console.log(`[${this.id}] מחובר כ-${this.state.me}`);
+        // בדיקת שליחה אמיתית (רק כשמוגדר SELFTEST_TO): הודעה אחת לצ'אט "אני" של החיבור הראשי,
+        // פעם אחת להפעלה — מוכיחה בשטח שהשליחה עובדת, בלי לפנות לאף אדם אחר.
+        const selfTo = String(process.env.SELFTEST_TO || "").replace(/\D/g, "");
+        if (selfTo && !this.selfTested && this.tenant?.adminOwned && selfTo === this.state.me) {
+          this.selfTested = true;
+          setTimeout(async () => {
+            try {
+              await this.send(`${selfTo}@s.whatsapp.net`, { text: "✅ בדיקה: הבוט מחובר ויודע לשלוח. (הודעה אוטומטית חד-פעמית — אפשר למחוק)" });
+              console.log(`[${this.id}] ✅ בדיקת שליחה הצליחה`);
+            } catch (e) { console.error(`[${this.id}] ❌ בדיקת שליחה נכשלה:`, e.message); }
+          }, 5000);
+        }
       }
       if (connection === "close") {
         const code = new Boom(lastDisconnect?.error)?.output?.statusCode;
