@@ -104,7 +104,7 @@ ok(sent.length === b2, "spam (group invite / crypto) → ignored");
 
 // 17. real need → answered and led to an intro meeting
 await s.handleMessage(inMsg("972520000006", "היי, הבת שלי בת 15 מתמודדת עם חרדה חברתית ולא יוצאת מהבית. אשמח לפרטים על הליווי"));
-ok(sent.length === b2 + 1 && sent.at(-1).text.includes("calendly"), "real need → warm answer + intro meeting link");
+ok(sent.length === b2 + 1 && sent.at(-1).text.includes("calendly") && !/^(שמחה לשמוע|איזה יופי)/.test(sent.at(-1).text), "real need → responds to the story first, then intro meeting link");
 
 // 18. a real lead who pasted a link is NOT treated as an ad
 await s.handleMessage(inMsg("972520000007", "ראיתי את המודעה שלך באינסטגרם https://instagram.com/p/abc אשמח לפרטים"));
