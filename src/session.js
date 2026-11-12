@@ -26,7 +26,16 @@ const digitsSet = (v) => new Set(String(v || "").split(",").map(s => s.replace(/
 const BLOCKLIST = digitsSet(process.env.BLOCKLIST);
 const ALLOWLIST = digitsSet(process.env.ALLOWLIST);
 
-const shortDelay = (text) => Math.min(4000, 900 + text.length * 25);
+// השהיה "אנושית" לפני תשובה: תלויה באורך ובקצת אקראיות — לא תשובה מיידית כמו בוט.
+const shortDelay = (text) => Math.min(6500, 1800 + text.length * 22 + Math.random() * 1500) * Number(process.env.DELAY_FACTOR ?? 1);
+
+// ── הגנות מפני חסימה של וואטסאפ ──
+// מחכים שהאדם יסיים לכתוב (כמה הודעות ברצף → תשובה אחת), מגבילים קצב לכל שיחה ובכלל,
+// ועוצרים לולאה עם בוט אחר. אף פעם לא פונים ראשונים — רק עונים למי שכתב.
+const DEBOUNCE_MS = Number(process.env.DEBOUNCE_MS ?? 7000);
+const MAX_PER_CHAT_10MIN = Number(process.env.MAX_PER_CHAT_10MIN || 6);
+const MAX_PER_HOUR = Number(process.env.MAX_PER_HOUR || 40);
+const COOLDOWN_REASON = "יותר מדי תשובות לאותה שיחה ב-10 דקות — הבוט עצר בה לשעה (הגנה מחסימה)";
 
 // מאיפה הגיעה הפנייה: מודעה בפייסבוק/אינסטגרם (וואטסאפ מצרף להודעה את פרטי המודעה),
 // קישור וואטסאפ (wa.me — מהאתר/לינקטרי), הטקסט המוכן של כפתורי האתר, או פנייה ישירה.
@@ -60,6 +69,10 @@ export class WaSession {
     this.lastReadable = new Map(); // jid → מתי הגיעה הודעה שפוענחה (להודעות שלא פוענחו)
     this.nudged = new Map();       // jid → מתי ענינו לתמונה בלי מילים (פעם בשעה לכל היותר)
     this.leads = new Map();        // פניות אחרונות: מי, מאיפה, מה קרה — בזיכרון בלבד, 48 שעות
+    this.pending = new Map();      // הודעות שמחכות שהאדם יסיים לכתוב
+    this.replyTimes = new Map();   // שיחה → זמני התשובות (הגבלת קצב לשיחה)
+    this.hourly = [];              // זמני כל התשובות בשעה האחרונה
+    this.cooldown = new Map();     // שיחה → עד מתי הבוט עוצר בה (אחרי הצפה/לולאה)
   }
 
   get tenant() { return getTenant(this.id); }
@@ -345,6 +358,49 @@ export class WaSession {
     }
     const convKey = replyJid;
 
+    // מחכים כמה שניות — אם האדם שולח עוד הודעות ברצף, עונים פעם אחת על הכל (כמו אדם).
+    const p = this.pending.get(convKey) || { texts: [], keys: [] };
+    p.texts.push(text.trim()); p.keys.push(m.key);
+    Object.assign(p, { jid, replyJid, phoneDigits, owner });
+    clearTimeout(p.timer);
+    this.pending.set(convKey, p);
+    if (DEBOUNCE_MS <= 0) { this.pending.delete(convKey); return this.reply(convKey, p); }
+    p.timer = setTimeout(() => {
+      this.pending.delete(convKey);
+      this.reply(convKey, p).catch(e => console.error(`[${this.id}] שגיאה בתשובה:`, e.message));
+    }, DEBOUNCE_MS);
+  }
+
+  /** מגבלות קצב: "" אם מותר לשלוח עכשיו, אחרת הסיבה. */
+  rateReason(convKey) {
+    const now = Date.now();
+    this.hourly = this.hourly.filter(t => now - t < 3600 * 1000);
+    const chatTimes = (this.replyTimes.get(convKey) || []).filter(t => now - t < 10 * 60 * 1000);
+    this.replyTimes.set(convKey, chatTimes);
+    if (chatTimes.length >= MAX_PER_CHAT_10MIN) {
+      // נראה כמו לולאה עם בוט אחר, או שיחה מהירה מדי — עוצרים את השיחה לשעה ומסמנים
+      this.cooldown.set(convKey, now + 3600 * 1000);
+      // התראה אחת בלבד — ברגע שהעצירה מתחילה
+      this.brain.flag(convKey.split("@")[0], "הבוט עצר שיחה מהירה מדי (אולי בוט אחר) — כדאי להציץ", false, "human");
+      return COOLDOWN_REASON;
+    }
+    if (this.hourly.length >= MAX_PER_HOUR) return `הגיע למקסימום ${MAX_PER_HOUR} תשובות בשעה (הגנה מחסימה)`;
+    return "";
+  }
+
+  async reply(convKey, p) {
+    const sock = this.sock;
+    if (!sock) return;
+    const { jid, replyJid, phoneDigits, owner } = p;
+    const text = p.texts.join("\n");
+    const who = phoneDigits || jid.split("@")[0];
+    const gateReason = this.gateReason({ jid, replyJid, phoneDigits }) || this.rateReason(convKey);
+    if (gateReason) {
+      console.log(`[${this.id}] לא עונה: ${gateReason}`);
+      this.trackLead(replyJid, who, { status: "skipped", reason: gateReason });
+      return;
+    }
+
     const out = await this.brain.think(convKey, text.trim());
     if (out.ignore) {
       // ספאם / פרסום חוזר — לא עונים ולא מסמנים כנקרא (שיישאר לקטי למחוק)
@@ -352,13 +408,16 @@ export class WaSession {
       this.trackLead(replyJid, phoneDigits || jid.split("@")[0], { status: "skipped", reason: out.reason });
       return;
     }
-    await sock.readMessages([m.key]);
+    await sock.readMessages(p.keys);
     await sock.sendPresenceUpdate("composing", replyJid);
     await new Promise(r => setTimeout(r, shortDelay(out.reply)));
     await sock.sendPresenceUpdate("paused", replyJid);
     await this.safeSend(replyJid, jid, { text: out.reply });
     this.state.handled++;
     this.brain.countHandled();
+    const nowT = Date.now();
+    this.hourly.push(nowT);
+    this.replyTimes.set(convKey, [...(this.replyTimes.get(convKey) || []), nowT]);
     this.trackLead(replyJid, phoneDigits || jid.split("@")[0], { status: "answered", reason: undefined });
 
     if (out.human) this.brain.pause(convKey, 12);
@@ -388,6 +447,7 @@ export class WaSession {
     const allowed = phoneDigits && ALLOWLIST.has(phoneDigits);
     const onlyNew = tenant.settings?.onlyNonContacts !== false;
     if (!allowed && onlyNew && (this.savedContacts.has(jid) || this.savedContacts.has(replyJid))) return "איש קשר שמור (המתג 'רק פניות חדשות')";
+    if ((this.cooldown.get(replyJid) || 0) > Date.now()) return COOLDOWN_REASON;
     if (this.brain.isPaused(replyJid) || this.brain.isPaused(jid)) return "השיחה נלקחה ידנית — הסוכן בחוץ ל-12 שעות";
     return "";
   }

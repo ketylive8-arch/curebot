@@ -1,6 +1,6 @@
 // בדיקת לוגיקת ההודעות מול חיבור וואטסאפ מדומה: מי מקבל תשובה, מתי הבוט שותק, ושהשליחה עצמה עובדת.
 // הרצה: npm test
-process.env.DATA_DIR = (await import("os")).tmpdir() + "/curebot-test-" + process.pid; process.env.NUDGE_MS = "300"; process.env.AI_MODE = "texts";
+process.env.DATA_DIR = (await import("os")).tmpdir() + "/curebot-test-" + process.pid; process.env.NUDGE_MS = "300"; process.env.AI_MODE = "texts"; process.env.DEBOUNCE_MS = "0"; process.env.DELAY_FACTOR = "0";
 const fs = await import("fs"); fs.rmSync(process.env.DATA_DIR, { recursive: true, force: true });
 const { createTenant, updateTenant } = await import("../src/tenants.js");
 const { WaSession } = await import("../src/session.js");
@@ -109,6 +109,12 @@ ok(sent.length === b2 + 1 && sent.at(-1).text.includes("calendly") && !/^(שמח
 // 18. a real lead who pasted a link is NOT treated as an ad
 await s.handleMessage(inMsg("972520000007", "ראיתי את המודעה שלך באינסטגרם https://instagram.com/p/abc אשמח לפרטים"));
 ok(!sent.at(-1).text.includes("פנית בעקבות עניין"), "lead with a link + interest → normal answer, not an ad question");
+
+// 19. loop protection: a chat that keeps firing gets at most 6 answers in 10 minutes, then the bot stops
+const b3 = sent.length;
+for (let i = 0; i < 8; i++) await s.handleMessage(inMsg("972530000009", "שאלה מספר " + i + " על הטיפול"));
+ok(sent.length - b3 === 6, "loop/flood: max 6 answers per chat in 10 minutes (" + (sent.length - b3) + ")");
+ok(/הגנה מחסימה/.test(s.view().leads.find(l => l.from === "972530000009")?.reason || ""), "loop/flood: reason shown to owner");
 
 // 12. skipped lead records the reason
 s.savedContacts.add("972513434343@s.whatsapp.net");
