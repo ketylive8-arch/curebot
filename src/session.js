@@ -3,7 +3,7 @@
 //  כל חיבור מחזיק: סוקט משלו, פרטי התחברות בתיקייה משלו בדיסק הקבוע,
 //  ו"מוח" משלו (זיכרון שיחות, השהיות, לידים). שני חיבורים לא מתערבבים לעולם.
 // ============================================================
-import baileys, { DisconnectReason, useMultiFileAuthState, fetchLatestBaileysVersion } from "@whiskeysockets/baileys";
+import baileys, { DisconnectReason, useMultiFileAuthState, fetchLatestBaileysVersion, generateMessageIDV2 } from "@whiskeysockets/baileys";
 import { Boom } from "@hapi/boom";
 import pino from "pino";
 import QRCode from "qrcode";
@@ -15,7 +15,9 @@ import { getTenant, authDirOf } from "./tenants.js";
 
 // Baileys 6.7.x הוא CommonJS; תחת ESM ה-default עלול להגיע עטוף.
 const makeWASocket = baileys.default || baileys;
-const genId = baileys.generateMessageIDV2 || baileys.default?.generateMessageIDV2;
+// חייב להיות ייבוא בשם: תחת ESM הפונקציה לא קיימת על ה-default (זה מה ששבר את כל השליחות).
+const genId = generateMessageIDV2;
+if (typeof genId !== "function") throw new Error("generateMessageIDV2 missing from Baileys");
 const log = pino({ level: "warn" });
 
 // רשימות כלליות מהגדרות השרת (מופרדות בפסיקים): חסימה = בוטים/אוטומציות שלא עונים להם,
@@ -37,6 +39,8 @@ export class WaSession {
     this.savedContacts = new Set();
     this.msgStore = new Map();   // לבקשות retry של וואטסאפ
     this.sentIds = new Set();    // הודעות שהבוט עצמו שלח — כדי לזהות כשקטי עונה ידנית
+    this.lastReadable = new Map(); // jid → מתי הגיעה הודעה שפוענחה (להודעות שלא פוענחו)
+    this.nudged = new Map();       // jid → מתי ביקשנו "לשלוח שוב" (פעם בשעה לכל היותר)
   }
 
   get tenant() { return getTenant(this.id); }
@@ -133,7 +137,7 @@ export class WaSession {
       for (const m of messages) {
         this.remember(m);
         try {
-          if (m.key?.fromMe) { this.noteManualReply(m); continue; }
+          if (m.key?.fromMe) { if (type === "notify" && this.isFresh(m)) this.noteManualReply(m); continue; }
           if (type === "notify") await this.handleMessage(m);
         } catch (e) {
           console.error(`[${this.id}] שגיאה בטיפול בהודעה:`, e.message);
@@ -141,6 +145,12 @@ export class WaSession {
       }
     });
     return sock;
+  }
+
+  /** הודעה "טרייה" (מהדקות האחרונות) — לא היסטוריה שמסונכרנת אחרי חיבור. */
+  isFresh(m, maxSec = 180) {
+    const ts = Number(m.messageTimestamp?.low ?? m.messageTimestamp ?? 0);
+    return ts > 0 && Date.now() / 1000 - ts < maxSec;
   }
 
   /** קטי/המשתמש ענו בעצמם בשיחה? הבוט יוצא מהשיחה הזו ל-12 שעות. */
@@ -210,6 +220,29 @@ export class WaSession {
     const owner = tenant.ownerNumber || "";
     const isOwner = owner && phoneDigits === owner;
 
+    const last3 = (phoneDigits || "").slice(-3) || "?";
+
+    // הודעה שוואטסאפ לא הצליחה לפענח (נפוץ בדקות הראשונות אחרי חיבור, כשההצפנה מול
+    // הפונה עוד לא הוקמה). וואטסאפ מבקשת שליחה חוזרת אוטומטית; אם תוך 20 שניות לא הגיעה
+    // גרסה קריאה — שולחים לפונה בקשה עדינה לשלוח שוב. השליחה שלנו גם מקימה את ההצפנה,
+    // כך שההודעה הבאה שלו/ה כבר נקראת.
+    if (!m.message && m.messageStubType) {
+      console.log(`[${this.id}] ⚠️ הודעה שלא פוענחה מ…${last3} (סוג ${m.messageStubType}) — ממתין לשליחה חוזרת`);
+      if (!isOwner && this.isFresh(m, 600) && this.gate({ jid, replyJid, phoneDigits })) {
+        const at = Date.now();
+        setTimeout(async () => {
+          if ((this.lastReadable.get(replyJid) || 0) >= at || (this.lastReadable.get(jid) || 0) >= at) return;
+          if (Date.now() - (this.nudged.get(replyJid) || 0) < 3600 * 1000) return;
+          this.nudged.set(replyJid, Date.now());
+          try {
+            await this.safeSend(replyJid, jid, { text: "היי 💛 ההודעה שלך הגיעה אליי לא שלמה. אפשר לשלוח אותה שוב?" });
+            console.log(`[${this.id}] ביקשתי מ…${last3} לשלוח שוב`);
+          } catch (e) { console.error(`[${this.id}] בקשת שליחה חוזרת נכשלה:`, e.message); }
+        }, Number(process.env.NUDGE_MS || 20000));
+      }
+      return;
+    }
+
     const content =
       m.message?.ephemeralMessage?.message || m.message?.viewOnceMessage?.message ||
       m.message?.viewOnceMessageV2?.message || m.message?.viewOnceMessageV2Extension?.message ||
@@ -219,11 +252,15 @@ export class WaSession {
       inner.conversation || inner.extendedTextMessage?.text || inner.imageMessage?.caption ||
       inner.videoMessage?.caption || inner.buttonsResponseMessage?.selectedDisplayText ||
       inner.templateButtonReplyMessage?.selectedId || inner.listResponseMessage?.title ||
-      inner.ephemeralMessage?.message?.extendedTextMessage?.text || inner.ephemeralMessage?.message?.conversation || "";
+      inner.ephemeralMessage?.message?.extendedTextMessage?.text || inner.ephemeralMessage?.message?.conversation ||
+      inner.editedMessage?.message?.conversation || inner.editedMessage?.message?.extendedTextMessage?.text ||
+      inner.protocolMessage?.editedMessage?.conversation || inner.protocolMessage?.editedMessage?.extendedTextMessage?.text || "";
 
     const audio = inner.audioMessage || content.audioMessage;
     // פרטיות: בלוג לא נרשם תוכן ההודעה ולא המספר המלא — רק 3 ספרות אחרונות ואורך.
-    console.log(`[${this.id}] 📩 פנייה …${(phoneDigits || "").slice(-3) || "?"} | owner:${!!isOwner} | audio:${!!audio} | ${(text || "").length} תווים`);
+    const kinds = Object.keys(inner || {}).filter(k => k !== "messageContextInfo").join(",") || "ריק";
+    console.log(`[${this.id}] 📩 פנייה …${last3} | owner:${!!isOwner} | audio:${!!audio} | ${(text || "").length} תווים | סוג:${kinds}`);
+    if (text.trim() || audio) { this.lastReadable.set(jid, Date.now()); this.lastReadable.set(replyJid, Date.now()); }
 
     if (!text.trim() && audio) {
       await sock.readMessages([m.key]);
@@ -235,7 +272,15 @@ export class WaSession {
       }
       text = spoken;
     }
-    if (!text.trim()) return;
+    if (!text.trim()) {
+      // תמונה/סרטון/מסמך בלי מילים — עונים בעדינות פעם אחת (לא לסטיקרים, תגובות והודעות מערכת).
+      const media = inner.imageMessage || inner.videoMessage || inner.documentMessage;
+      if (media && !isOwner && this.gate({ jid, replyJid, phoneDigits }) && Date.now() - (this.nudged.get(replyJid) || 0) > 3600 * 1000) {
+        this.nudged.set(replyJid, Date.now());
+        await this.safeSend(replyJid, jid, { text: "קיבלתי, תודה 🙏 כדי שאוכל לעזור — אפשר לכתוב לי במילים מה תרצי?" });
+      }
+      return;
+    }
 
     // ===== בעל/ת החיבור מדבר/ת עם הסוכן =====
     if (isOwner) {
@@ -247,19 +292,8 @@ export class WaSession {
       return;
     }
 
-    if (phoneDigits && BLOCKLIST.has(phoneDigits)) return;
-    if (!tenant.settings?.active || this.brain.isGloballyPaused()) return;
-
-    // ברירת מחדל: עונים רק למי שלא שמור באנשי הקשר (לידים / פניות חדשות).
-    const allowed = phoneDigits && ALLOWLIST.has(phoneDigits);
-    const onlyNew = tenant.settings?.onlyNonContacts !== false;
-    if (!allowed && onlyNew && (this.savedContacts.has(jid) || (replyJid !== jid && this.savedContacts.has(replyJid)))) {
-      console.log(`[${this.id}] איש קשר שמור — מדלג`);
-      return;
-    }
-
+    if (!this.gate({ jid, replyJid, phoneDigits, log: true })) return;
     const convKey = replyJid;
-    if (this.brain.isPaused(convKey) || this.brain.isPaused(jid)) return;
 
     await sock.readMessages([m.key]);
     await sock.sendPresenceUpdate("composing", replyJid);
@@ -283,6 +317,21 @@ export class WaSession {
         } catch (e) { console.error(`[${this.id}] כשל בשליחת התראה:`, e.message); }
       }
     }
+  }
+
+  /** האם מותר לענות לפונה הזה עכשיו? (חסימה, מושהה, איש קשר שמור, שיחה שנלקחה ידנית) */
+  gate({ jid, replyJid, phoneDigits, log = false }) {
+    const tenant = this.tenant;
+    const why = (r) => { if (log) console.log(`[${this.id}] לא עונה: ${r}`); return false; };
+    if (!tenant) return false;
+    if (phoneDigits && BLOCKLIST.has(phoneDigits)) return why("מספר חסום");
+    if (!tenant.settings?.active) return why("המענה האוטומטי כבוי");
+    if (this.brain.isGloballyPaused()) return why("הסוכן מושהה");
+    const allowed = phoneDigits && ALLOWLIST.has(phoneDigits);
+    const onlyNew = tenant.settings?.onlyNonContacts !== false;
+    if (!allowed && onlyNew && (this.savedContacts.has(jid) || this.savedContacts.has(replyJid))) return why("איש קשר שמור (המתג 'רק פניות חדשות')");
+    if (this.brain.isPaused(replyJid) || this.brain.isPaused(jid)) return why("השיחה נלקחה ידנית — הסוכן בחוץ ל-12 שעות");
+    return true;
   }
 
   view() {
