@@ -345,9 +345,15 @@ export class WaSession {
     }
     const convKey = replyJid;
 
+    const out = await this.brain.think(convKey, text.trim());
+    if (out.ignore) {
+      // ספאם / פרסום חוזר — לא עונים ולא מסמנים כנקרא (שיישאר לקטי למחוק)
+      console.log(`[${this.id}] לא עונה: ${out.reason}`);
+      this.trackLead(replyJid, phoneDigits || jid.split("@")[0], { status: "skipped", reason: out.reason });
+      return;
+    }
     await sock.readMessages([m.key]);
     await sock.sendPresenceUpdate("composing", replyJid);
-    const out = await this.brain.think(convKey, text.trim());
     await new Promise(r => setTimeout(r, shortDelay(out.reply)));
     await sock.sendPresenceUpdate("paused", replyJid);
     await this.safeSend(replyJid, jid, { text: out.reply });

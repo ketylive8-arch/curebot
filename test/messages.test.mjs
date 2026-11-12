@@ -79,6 +79,37 @@ ok(adLead && adLead.source.kind === "ad" && adLead.source.label.includes("אינ
 await s.handleMessage(inMsg("972512323232", "היי קטי! אשמח לקבוע שיחה ראשונית"));
 ok(s.view().leads.find(l => l.from === "972512323232")?.source.kind === "site", "website button lead: source = site");
 
+// 13. someone advertising their own business → one polite question + site
+const before = sent.length;
+await s.handleMessage(inMsg("972520000001", "היי! אני מתמחה בבניית אתרים לעסקים 🚀 מבצע מיוחד רק השבוע — 30% הנחה! לפרטים: www.webpro.co.il 050-1234567"));
+ok(sent.length === before + 1 && sent.at(-1).text.includes("פנית בעקבות עניין בליווי שלי") && sent.at(-1).text.includes("ketysegev.com"), "business ad → asks politely if interested + site");
+await s.handleMessage(inMsg("972520000001", "רק להזכיר, המבצע נגמר מחר! הנחה של 30% על בניית אתר 🔥 www.webpro.co.il"));
+ok(sent.length === before + 1, "second ad from same person → ignored");
+
+// 14. ad, then "yes" → site + intro meeting link
+await s.handleMessage(inMsg("972520000002", "שירותי קידום בגוגל ושיווק דיגיטלי לעסקים, מחיר מיוחד! www.seo.co.il"));
+await s.handleMessage(inMsg("972520000002", "כן, בעצם אני מתעניינת"));
+ok(sent.at(-1).text.includes("ketysegev.com") && sent.at(-1).text.includes("calendly"), "ad → 'yes' → site + intro meeting");
+
+// 15. ad, then "no" → polite goodbye
+await s.handleMessage(inMsg("972520000003", "ביטוח רכב בהנחה של 20%! לפרטים 052-7654321 www.bit.co.il"));
+await s.handleMessage(inMsg("972520000003", "לא תודה"));
+ok(sent.at(-1).text.includes("בסדר גמור"), "ad → 'no' → polite goodbye");
+
+// 16. clear spam → ignored, nothing sent
+const b2 = sent.length;
+await s.handleMessage(inMsg("972520000004", "הצטרפו לקבוצה שלנו 👉 https://chat.whatsapp.com/AbCdEf"));
+await s.handleMessage(inMsg("972520000005", "רוצה להרוויח מהבית? הכנסה פסיבית עם קריפטו https://x.co https://y.co"));
+ok(sent.length === b2, "spam (group invite / crypto) → ignored");
+
+// 17. real need → answered and led to an intro meeting
+await s.handleMessage(inMsg("972520000006", "היי, הבת שלי בת 15 מתמודדת עם חרדה חברתית ולא יוצאת מהבית. אשמח לפרטים על הליווי"));
+ok(sent.length === b2 + 1 && sent.at(-1).text.includes("calendly"), "real need → warm answer + intro meeting link");
+
+// 18. a real lead who pasted a link is NOT treated as an ad
+await s.handleMessage(inMsg("972520000007", "ראיתי את המודעה שלך באינסטגרם https://instagram.com/p/abc אשמח לפרטים"));
+ok(!sent.at(-1).text.includes("פנית בעקבות עניין"), "lead with a link + interest → normal answer, not an ad question");
+
 // 12. skipped lead records the reason
 s.savedContacts.add("972513434343@s.whatsapp.net");
 await s.handleMessage(inMsg("972513434343", "מה נשמע"));
