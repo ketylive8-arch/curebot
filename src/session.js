@@ -28,6 +28,24 @@ const ALLOWLIST = digitsSet(process.env.ALLOWLIST);
 
 const shortDelay = (text) => Math.min(4000, 900 + text.length * 25);
 
+// מאיפה הגיעה הפנייה: מודעה בפייסבוק/אינסטגרם (וואטסאפ מצרף להודעה את פרטי המודעה),
+// קישור וואטסאפ (wa.me — מהאתר/לינקטרי), הטקסט המוכן של כפתורי האתר, או פנייה ישירה.
+const SITE_PREFILL = /היי קטי! אשמח|ketysegev/;
+export function leadSource(inner, text) {
+  const ci = inner?.extendedTextMessage?.contextInfo || inner?.imageMessage?.contextInfo ||
+    inner?.videoMessage?.contextInfo || inner?.messageContextInfo || {};
+  const ad = ci.externalAdReply;
+  const conv = String(ci.conversionSource || ci.entryPointConversionSource || "").toLowerCase();
+  if (ad || /\bad\b|ctwa|fb_ads|ads/.test(conv)) {
+    const blob = `${ad?.sourceUrl || ""} ${ad?.sourceType || ""} ${conv}`.toLowerCase();
+    const where = /instagram|\big\b/.test(blob) ? "אינסטגרם" : /facebook|\bfb\b/.test(blob) ? "פייסבוק" : "פייסבוק/אינסטגרם";
+    return { kind: "ad", label: `מודעה ב${where}${ad?.title ? ` · "${String(ad.title).slice(0, 40)}"` : ""}` };
+  }
+  if (SITE_PREFILL.test(text || "")) return { kind: "site", label: "כפתור באתר" };
+  if (/click_to_chat|wa\.me|whatsapp_link|link/.test(conv)) return { kind: "link", label: "קישור וואטסאפ (אתר / לינקטרי / ביו)" };
+  return { kind: "direct", label: "פנייה ישירה" };
+}
+
 export class WaSession {
   constructor(tenantId) {
     this.id = tenantId;
@@ -40,7 +58,8 @@ export class WaSession {
     this.msgStore = new Map();   // לבקשות retry של וואטסאפ
     this.sentIds = new Set();    // הודעות שהבוט עצמו שלח — כדי לזהות כשקטי עונה ידנית
     this.lastReadable = new Map(); // jid → מתי הגיעה הודעה שפוענחה (להודעות שלא פוענחו)
-    this.nudged = new Map();       // jid → מתי ביקשנו "לשלוח שוב" (פעם בשעה לכל היותר)
+    this.nudged = new Map();       // jid → מתי ענינו לתמונה בלי מילים (פעם בשעה לכל היותר)
+    this.leads = new Map();        // פניות אחרונות: מי, מאיפה, מה קרה — בזיכרון בלבד, 48 שעות
   }
 
   get tenant() { return getTenant(this.id); }
@@ -159,6 +178,18 @@ export class WaSession {
     return sock;
   }
 
+  /** מעדכן את "פניות אחרונות" (בזיכרון בלבד). status: answered | unreadable | skipped | waiting */
+  trackLead(key, phone, patch) {
+    const now = Date.now();
+    for (const [k, v] of this.leads) if (now - v.lastAt > 48 * 3600 * 1000) this.leads.delete(k);
+    const l = this.leads.get(key) || { from: phone, firstAt: now, count: 0, source: null };
+    Object.assign(l, patch, { lastAt: now });
+    if (patch.count) l.count = (this.leads.get(key)?.count || 0) + 1;
+    if (patch.source && (!l.source || patch.source.kind === "ad")) l.source = patch.source;
+    this.leads.set(key, l);
+    if (this.leads.size > 100) this.leads.delete(this.leads.keys().next().value);
+  }
+
   /** הודעה "טרייה" (מהדקות האחרונות) — לא היסטוריה שמסונכרנת אחרי חיבור. */
   isFresh(m, maxSec = 180) {
     const ts = Number(m.messageTimestamp?.low ?? m.messageTimestamp ?? 0);
@@ -234,22 +265,18 @@ export class WaSession {
 
     const last3 = (phoneDigits || "").slice(-3) || "?";
 
-    // הודעה שוואטסאפ לא הצליחה לפענח (נפוץ בדקות הראשונות אחרי חיבור, כשההצפנה מול
-    // הפונה עוד לא הוקמה). וואטסאפ מבקשת שליחה חוזרת אוטומטית; אם תוך 20 שניות לא הגיעה
-    // גרסה קריאה — שולחים לפונה בקשה עדינה לשלוח שוב. השליחה שלנו גם מקימה את ההצפנה,
-    // כך שההודעה הבאה שלו/ה כבר נקראת.
+    // הודעה שהבוט לא הצליח לפענח (ההודעה עצמה הגיעה לטלפון כרגיל — רק העותק של הבוט נעול).
+    // וואטסאפ מבקשת שליחה חוזרת לבד. לא כותבים לפונה כלום (זה מבלבל אנשים) —
+    // אם תוך 20 שניות לא הגיעה גרסה קריאה, מסמנים לבעל/ת החיבור להציץ בוואטסאפ.
     if (!m.message && m.messageStubType) {
-      console.log(`[${this.id}] ⚠️ הודעה שלא פוענחה מ…${last3} (סוג ${m.messageStubType}) — ממתין לשליחה חוזרת`);
-      if (!isOwner && this.isFresh(m, 600) && this.gate({ jid, replyJid, phoneDigits })) {
+      const why = String(m.messageStubParameters?.[0] || "").replace(/[0-9]{6,}/g, "…").slice(0, 60);
+      console.log(`[${this.id}] ⚠️ הודעה שלא פוענחה מ…${last3} (סוג ${m.messageStubType}${why ? ` · ${why}` : ""})`);
+      if (!isOwner && this.isFresh(m, 600)) {
         const at = Date.now();
-        setTimeout(async () => {
+        setTimeout(() => {
           if ((this.lastReadable.get(replyJid) || 0) >= at || (this.lastReadable.get(jid) || 0) >= at) return;
-          if (Date.now() - (this.nudged.get(replyJid) || 0) < 3600 * 1000) return;
-          this.nudged.set(replyJid, Date.now());
-          try {
-            await this.safeSend(replyJid, jid, { text: "היי 💛 ההודעה שלך הגיעה אליי לא שלמה. אפשר לשלוח אותה שוב?" });
-            console.log(`[${this.id}] ביקשתי מ…${last3} לשלוח שוב`);
-          } catch (e) { console.error(`[${this.id}] בקשת שליחה חוזרת נכשלה:`, e.message); }
+          this.trackLead(replyJid, phoneDigits || jid.split("@")[0], { status: "unreadable" });
+          this.brain.flag(phoneDigits || jid.split("@")[0], "הבוט לא הצליח לקרוא הודעה — כדאי להציץ בשיחה בוואטסאפ", false, "unreadable");
         }, Number(process.env.NUDGE_MS || 20000));
       }
       return;
@@ -273,6 +300,12 @@ export class WaSession {
     const kinds = Object.keys(inner || {}).filter(k => k !== "messageContextInfo").join(",") || "ריק";
     console.log(`[${this.id}] 📩 פנייה …${last3} | owner:${!!isOwner} | audio:${!!audio} | ${(text || "").length} תווים | סוג:${kinds}`);
     if (text.trim() || audio) { this.lastReadable.set(jid, Date.now()); this.lastReadable.set(replyJid, Date.now()); }
+    if (!isOwner && (text.trim() || audio || inner.imageMessage || inner.videoMessage || inner.documentMessage)) {
+      const source = leadSource(inner, text);
+      const isNew = !this.leads.has(replyJid);
+      this.trackLead(replyJid, phoneDigits || jid.split("@")[0], { source, preview: isNew ? (text || "").slice(0, 90) : undefined, status: "waiting", count: 1 });
+      if (isNew) console.log(`[${this.id}] מקור הפנייה מ…${last3}: ${source.label}`);
+    }
 
     if (!text.trim() && audio) {
       await sock.readMessages([m.key]);
@@ -304,7 +337,12 @@ export class WaSession {
       return;
     }
 
-    if (!this.gate({ jid, replyJid, phoneDigits, log: true })) return;
+    const gateReason = this.gateReason({ jid, replyJid, phoneDigits });
+    if (gateReason) {
+      console.log(`[${this.id}] לא עונה: ${gateReason}`);
+      this.trackLead(replyJid, phoneDigits || jid.split("@")[0], { status: "skipped", reason: gateReason });
+      return;
+    }
     const convKey = replyJid;
 
     await sock.readMessages([m.key]);
@@ -315,6 +353,7 @@ export class WaSession {
     await this.safeSend(replyJid, jid, { text: out.reply });
     this.state.handled++;
     this.brain.countHandled();
+    this.trackLead(replyJid, phoneDigits || jid.split("@")[0], { status: "answered", reason: undefined });
 
     if (out.human) this.brain.pause(convKey, 12);
     // לא הייתה תשובה בטקסטים של העסק — מסמנים לבעלים כדי שיוסיפו שאלה ותשובה.
@@ -332,22 +371,24 @@ export class WaSession {
   }
 
   /** האם מותר לענות לפונה הזה עכשיו? (חסימה, מושהה, איש קשר שמור, שיחה שנלקחה ידנית) */
-  gate({ jid, replyJid, phoneDigits, log = false }) {
+  gate(args) { return !this.gateReason(args); }
+  /** מחזיר את הסיבה שלא עונים (מחרוזת), או "" אם מותר לענות. */
+  gateReason({ jid, replyJid, phoneDigits }) {
     const tenant = this.tenant;
-    const why = (r) => { if (log) console.log(`[${this.id}] לא עונה: ${r}`); return false; };
-    if (!tenant) return false;
-    if (phoneDigits && BLOCKLIST.has(phoneDigits)) return why("מספר חסום");
-    if (!tenant.settings?.active) return why("המענה האוטומטי כבוי");
-    if (this.brain.isGloballyPaused()) return why("הסוכן מושהה");
+    if (!tenant) return "אין חיבור";
+    if (phoneDigits && BLOCKLIST.has(phoneDigits)) return "המספר ברשימת החסימה (BLOCKLIST)";
+    if (!tenant.settings?.active) return "המענה האוטומטי כבוי";
+    if (this.brain.isGloballyPaused()) return "הסוכן מושהה";
     const allowed = phoneDigits && ALLOWLIST.has(phoneDigits);
     const onlyNew = tenant.settings?.onlyNonContacts !== false;
-    if (!allowed && onlyNew && (this.savedContacts.has(jid) || this.savedContacts.has(replyJid))) return why("איש קשר שמור (המתג 'רק פניות חדשות')");
-    if (this.brain.isPaused(replyJid) || this.brain.isPaused(jid)) return why("השיחה נלקחה ידנית — הסוכן בחוץ ל-12 שעות");
-    return true;
+    if (!allowed && onlyNew && (this.savedContacts.has(jid) || this.savedContacts.has(replyJid))) return "איש קשר שמור (המתג 'רק פניות חדשות')";
+    if (this.brain.isPaused(replyJid) || this.brain.isPaused(jid)) return "השיחה נלקחה ידנית — הסוכן בחוץ ל-12 שעות";
+    return "";
   }
 
   view() {
-    return { ...this.state, ...this.brain.recentActivity() };
+    const leads = [...this.leads.values()].sort((a, b) => b.lastAt - a.lastAt).slice(0, 25);
+    return { ...this.state, ...this.brain.recentActivity(), leads };
   }
 }
 

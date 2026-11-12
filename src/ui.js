@@ -112,6 +112,10 @@ textarea:focus{border-color:var(--gold);background:#fff;outline:none;box-shadow:
 .bub.me{align-self:flex-start;background:var(--ink);color:#fff;border-end-start-radius:6px}
 .bub.bot{align-self:flex-end;background:var(--surface);border-end-end-radius:6px}
 .bub small{display:block;margin-top:6px;color:var(--gold-ink);font-size:13px}
+.lead{padding:14px 0;border-top:1px solid var(--line)}
+.lead:first-child{border-top:0}
+.lead-top{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:4px}
+.lead-text{margin-top:6px;font-size:15px;color:#3A3A3C}
 .tabs{display:flex;gap:4px;background:var(--surface);border-radius:14px;padding:4px;margin:0 0 20px}
 .tabs button{flex:1;border:0;background:transparent;border-radius:11px;min-height:44px;font:inherit;font-size:15px;font-weight:500;color:var(--muted);cursor:pointer;padding:0 10px}
 .tabs button[aria-selected=true]{background:#fff;color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.08)}
@@ -260,6 +264,7 @@ async function renderConn(id) {
     '<section class="card" id="hero" aria-live="polite"></section>' +
     '<section class="section"><div class="stats" id="stats"></div></section>' +
     '<section class="card section" id="privacy"></section>' +
+    '<section class="card section" id="leadsBox"><h2>פניות אחרונות</h2><div id="leads"></div></section>' +
     '<section class="card section"><h2>העסק והתשובות</h2><div id="biz"></div></section>' +
     '<section class="card section"><h2>הגדרות</h2><div id="sets"></div></section>' +
     '<section class="card section" id="flagsBox"><h2>דורש את תשומת לבך</h2><div id="flags"></div></section>' +
@@ -286,8 +291,20 @@ async function renderConn(id) {
       : [[s.handled || 0, "הודעות שנענו"], [s.activeChats || 0, "שיחות פעילות"], [s.hot || 0, "ביקשו לדבר איתך"], [s.unanswered || 0, "שאלות בלי תשובה"]];
     document.getElementById("stats").innerHTML = tiles.map(([n, l]) => '<div class="stat"><b>' + n + "</b><span>" + l + "</span></div>").join("");
     document.getElementById("flagsBox").hidden = !!d.private;
-    const ICON = { alert: "🔴", human: "🟡", unanswered: "❔" };
-    const NOTE = { alert: "מצוקה — כדאי לחזור אישית", human: "ביקשו לדבר עם אדם", unanswered: "לא הייתה תשובה בטקסטים — כדאי להוסיף שאלה" };
+    const ICON = { alert: "🔴", human: "🟡", unanswered: "❔", unreadable: "🔒" };
+    const NOTE = { alert: "מצוקה — כדאי לחזור אישית", human: "ביקשו לדבר עם אדם", unanswered: "לא הייתה תשובה בטקסטים — כדאי להוסיף שאלה", unreadable: "הבוט לא הצליח לקרוא את ההודעה" };
+    document.getElementById("leadsBox").hidden = !!d.private;
+    if (!d.private) {
+      const ago = (t) => { const m = Math.round((Date.now() - t) / 60000); return m < 1 ? "עכשיו" : m < 60 ? "לפני " + m + " דק׳" : m < 1440 ? "לפני " + Math.round(m / 60) + " שע׳" : "לפני יום"; };
+      const ST = { answered: ["ok", "הבוט ענה"], skipped: ["bad", "לא נענה"], unreadable: ["wait", "לא נקרא — לבדוק בוואטסאפ"], waiting: ["wait", "בטיפול"] };
+      document.getElementById("leads").innerHTML = (s.leads || []).length
+        ? s.leads.map(l => { const [c, lab] = ST[l.status] || ["", ""];
+            return '<div class="lead"><div class="lead-top"><b>' + esc(phone(l.from) || l.from) + "</b>" + '<span class="pill ' + c + '"><i aria-hidden="true"></i>' + lab + "</span></div>" +
+              '<div class="muted" style="font-size:14px">📍 ' + esc(l.source?.label || "לא ידוע") + " · " + ago(l.lastAt) + (l.count > 1 ? " · " + l.count + " הודעות" : "") + "</div>" +
+              (l.preview ? '<div class="lead-text">' + esc(l.preview) + "</div>" : "") +
+              (l.status === "skipped" && l.reason ? '<div class="muted" style="font-size:14px">למה: ' + esc(l.reason) + "</div>" : "") + "</div>"; }).join("")
+        : '<p class="muted" style="margin:0">עוד אין פניות מאז ההפעלה האחרונה של הבוט.</p>';
+    }
     if (!d.private) document.getElementById("flags").innerHTML = (s.flagged || []).length
       ? s.flagged.slice(0, 12).map(f => '<div class="flag">' + (ICON[f.kind] || "🟡") + " <b>" + esc(phone(f.from) || f.from) + '</b> <span class="muted" style="font-size:14px">· ' + (NOTE[f.kind] || "") + '</span><div>' + esc(f.text) + "</div></div>").join("")
       : '<p class="muted" style="margin:0">אין כרגע פניות שדורשות אותך.</p>';
