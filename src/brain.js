@@ -1,4 +1,5 @@
 import { SYSTEM_PROMPT, CALENDLY } from "./prompt.js";
+import { businessReply, businessPrompt } from "./business.js";
 
 // בוחר וריאציה אקראית — כדי שהתשובות לא יישמעו תבניתיות אלא אנושיות ומגוונות.
 function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
@@ -198,7 +199,7 @@ const TTL_MS = 48 * 60 * 60 * 1000;
  * מוח נפרד לכל חיבור וואטסאפ (כל משתמש/ת במערכת): זיכרון שיחות, השהיות, מונים ולידים
  * משלו — כך שני חיבורים לעולם לא מתערבבים.
  */
-export function createBrain() {
+export function createBrain(getProfile = () => null) {
   const chats = new Map();
   let globalPause = false;
   let handled = 0;
@@ -224,15 +225,16 @@ export function createBrain() {
     pauseAll: (v) => { globalPause = !!v; },
     isGloballyPaused: () => globalPause,
     countHandled: () => { handled++; },
-    flag(from, text, alert) {
-      flagged.unshift({ from, text, alert, at: Date.now() });
+    /** kind: "alert" (מצוקה) | "human" (ביקשו אדם) | "unanswered" (לא הייתה תשובה בטקסטים) */
+    flag(from, text, alert, kind) {
+      flagged.unshift({ from, text, alert: !!alert, kind: kind || (alert ? "alert" : "human"), at: Date.now() });
       if (flagged.length > 30) flagged.pop();
     },
     stats: () => ({ activeChats: chats.size, handled }),
     recentActivity() {
       const day = Date.now() - 24 * 3600 * 1000;
       const recent = flagged.filter(f => f.at > day);
-      return { activeChats: chats.size, handled, hot: recent.filter(f => !f.alert).length, alerts: recent.filter(f => f.alert).length, flagged: recent };
+      return { activeChats: chats.size, handled, hot: recent.filter(f => f.kind === "human").length, alerts: recent.filter(f => f.alert).length, unanswered: recent.filter(f => f.kind === "unanswered").length, flagged: recent };
     },
 
     async thinkAsOwner(jid, userText, systemPrompt, context) {
@@ -247,11 +249,14 @@ export function createBrain() {
     /** @returns {{reply:string, ended:boolean, alert:boolean, human:boolean, infoCard:boolean}} */
     async think(jid, userText) {
       const chat = getChat(jid);
+      // לכל חיבור הפרופיל שלו: השיטה של קטי, או עסק אחר שעונה לפי הטקסטים של בעליו.
+      const profile = getProfile() || { kind: "curemindset" };
+      const isBiz = profile.kind === "business";
       let raw = "";
       try {
-        raw = await callOpenAI(SYSTEM_PROMPT, [...chat.history, { role: "user", content: userText }]);
+        raw = await callOpenAI(isBiz ? businessPrompt(profile) : SYSTEM_PROMPT, [...chat.history, { role: "user", content: userText }]);
       } catch {
-        const local = localReply(userText, chat);
+        const local = isBiz ? businessReply(profile, userText, chat) : localReply(userText, chat);
         if (local.infoCard && chat.infoSent) local.infoCard = false;
         else if (local.infoCard) chat.infoSent = true;
         remember(chat, userText, local.reply);

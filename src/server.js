@@ -8,7 +8,8 @@ import { page } from "./ui.js";
 import { identify, login, setSession, clearSession, loginAllowed, loginFailed, loginOk, requireAdmin, requireTenantAccess, securityHeaders } from "./auth.js";
 import { listTenants, getTenant, createTenant, updateTenant, resetCode, removeTenant, publicTenant, ensureDefaultTenant } from "./tenants.js";
 import { startSession, getSession, dropSession } from "./session.js";
-import { aiState, diagnoseOpenAI } from "./brain.js";
+import { aiState, diagnoseOpenAI, createBrain } from "./brain.js";
+import { sanitizeProfile } from "./business.js";
 
 // יציבות: שגיאה בודדת של Baileys/הצפנה לא מפילה את כל השרת.
 process.on("uncaughtException", (e) => console.error("[server] uncaughtException:", e?.message || e));
@@ -104,7 +105,7 @@ app.get("/api/tenants", requireAdmin, (_req, res) => {
 
 app.post("/api/tenants", requireAdmin, (req, res) => {
   if (listTenants().length >= MAX_TENANTS) return res.status(400).json({ error: `אפשר עד ${MAX_TENANTS} חיבורים בשרת הנוכחי.` });
-  const { tenant, code } = createTenant({ name: req.body?.name, ownerNumber: req.body?.ownerNumber });
+  const { tenant, code } = createTenant({ name: req.body?.name, ownerNumber: req.body?.ownerNumber, adminOwned: req.body?.mine === true, kind: req.body?.kind === "curemindset" ? "curemindset" : "business" });
   startSession(tenant.id).catch(e => console.error(`[${tenant.id}] start:`, e.message));
   const link = `${baseUrl(req)}/u/${tenant.id}`;
   res.json({ tenant, code, link, directLink: `${link}?c=${code}` });
@@ -113,11 +114,17 @@ app.post("/api/tenants", requireAdmin, (req, res) => {
 app.get("/api/tenants/:id", requireTenantAccess, (req, res) => {
   const t = getTenant(req.params.id);
   if (!t) return res.status(404).json({ error: "החיבור לא נמצא" });
-  res.json({ tenant: publicTenant(t), status: statusOf(t.id), ai: aiState() });
+  const full = statusOf(t.id);
+  // פרטיות: על חיבור של מישהו אחר, המנהלת מקבלת רק סטטוס ומונים — בלי תוכן הודעות ובלי מספרי פונים.
+  const isPrivateForViewer = req.who.role === "admin" && !t.adminOwned;
+  const status = isPrivateForViewer
+    ? { status: full.status, me: full.me || null, lastEvent: full.lastEvent, qrDataUrl: full.qrDataUrl, pairingCode: full.pairingCode, handled: full.handled || 0, activeChats: full.activeChats || 0 }
+    : full;
+  res.json({ tenant: publicTenant(t), status, private: isPrivateForViewer, ai: aiState() });
 });
 
 app.patch("/api/tenants/:id", requireTenantAccess, (req, res) => {
-  const t = updateTenant(req.params.id, req.body || {});
+  const t = updateTenant(req.params.id, { ...(req.body || {}) }, { byAdmin: req.who.role === "admin" });
   if (!t) return res.status(404).json({ error: "החיבור לא נמצא" });
   res.json({ tenant: t });
 });
@@ -134,6 +141,26 @@ app.post("/api/tenants/:id/pair", requireTenantAccess, async (req, res) => {
   if (!s) return res.status(404).json({ error: "החיבור לא נמצא" });
   try { res.json({ code: await s.pairingCode(req.body?.phone) }); }
   catch (e) { res.status(400).json({ error: e.message || "לא הצלחתי ליצור קוד, נסי שוב" }); }
+});
+
+// "בדיקת תשובה": מקלידים הודעה כמו לקוח/ה ורואים מה הבוט יענה — בלי לשלוח בוואטסאפ.
+// אפשר לבדוק גם טיוטה של פרופיל לפני שמירה. כל בדיקה מתחילה שיחה חדשה ולא נשמרת.
+const previewChats = new Map();
+app.post("/api/tenants/:id/preview", requireTenantAccess, async (req, res) => {
+  const t = getTenant(req.params.id);
+  if (!t) return res.status(404).json({ error: "החיבור לא נמצא" });
+  const text = String(req.body?.text || "").trim().slice(0, 1000);
+  if (!text) return res.status(400).json({ error: "כתבי הודעה לבדיקה" });
+  const profile = req.body?.profile ? sanitizeProfile(req.body.profile, t.profile) : t.profile;
+  const key = `${t.id}:${req.who.role}`;
+  if (req.body?.reset || !previewChats.has(key)) {
+    const holder = { p: profile };
+    previewChats.set(key, { holder, brain: createBrain(() => holder.p) });
+  }
+  const pv = previewChats.get(key);
+  pv.holder.p = profile; // תמיד לפי הטיוטה הנוכחית
+  const out = await pv.brain.think("preview", text);
+  res.json({ reply: out.reply, human: !!out.human, alert: !!out.alert, unanswered: !!out.unanswered, mode: aiState().mode });
 });
 
 app.post("/api/tenants/:id/reset-code", requireAdmin, (req, res) => {

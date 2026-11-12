@@ -96,6 +96,22 @@ input:focus{border-color:var(--gold);background:#fff;outline:none;box-shadow:0 0
 .flag:first-child{border-top:0}
 .muted{color:var(--muted)}
 .back{display:inline-flex;margin-bottom:18px}
+textarea{width:100%;border:1px solid var(--line);background:var(--surface);border-radius:14px;padding:12px 16px;font:inherit;color:var(--ink);resize:vertical}
+textarea:focus{border-color:var(--gold);background:#fff;outline:none;box-shadow:0 0 0 4px var(--gold-soft)}
+.check,.opt{display:flex;gap:12px;align-items:flex-start;font-weight:400;cursor:pointer;margin:0 0 18px}
+.check input,.opt input{width:22px;height:22px;margin-top:3px;accent-color:var(--gold);flex:none}
+.kind{border:0;padding:0;margin:0 0 8px}
+.opt{border:1px solid var(--line);border-radius:16px;padding:16px;margin-bottom:10px}
+.opt:has(input:checked){border-color:var(--gold);background:var(--gold-soft)}
+.faq{display:grid;gap:8px;padding:14px;border:1px solid var(--line);border-radius:16px;margin-bottom:10px}
+.faq .btn-link{justify-self:start;min-height:32px;color:var(--red)}
+.tester{margin-top:28px;padding-top:22px;border-top:1px solid var(--line)}
+.tlog{display:flex;flex-direction:column;gap:8px;max-height:320px;overflow-y:auto;margin-bottom:12px}
+.tlog:empty{display:none}
+.bub{max-width:85%;padding:10px 14px;border-radius:18px;white-space:pre-wrap;font-size:16px;line-height:1.5}
+.bub.me{align-self:flex-start;background:var(--ink);color:#fff;border-end-start-radius:6px}
+.bub.bot{align-self:flex-end;background:var(--surface);border-end-end-radius:6px}
+.bub small{display:block;margin-top:6px;color:var(--gold-ink);font-size:13px}
 .tabs{display:flex;gap:4px;background:var(--surface);border-radius:14px;padding:4px;margin:0 0 20px}
 .tabs button{flex:1;border:0;background:transparent;border-radius:11px;min-height:44px;font:inherit;font-size:15px;font-weight:500;color:var(--muted);cursor:pointer;padding:0 10px}
 .tabs button[aria-selected=true]{background:#fff;color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.08)}
@@ -199,7 +215,8 @@ function renderAdd() {
     '<form id="af" class="card section" novalidate>' +
       "<h2>חיבור חדש</h2>" +
       '<div class="field"><label for="nm">שם החיבור</label><input id="nm" type="text" placeholder="למשל: הקליניקה בחיפה" required></div>' +
-      '<div class="field"><label for="ph">מספר לקבלת התראות<span class="hint">לכאן יישלחו התראות מצוקה ובקשות לדבר עם אדם. אפשר להשאיר ריק.</span></label><input id="ph" type="tel" inputmode="tel" placeholder="050-0000000"></div>' +
+      '<div class="field"><label for="ph">הטלפון של מי שמחבר/ת<span class="hint">לשם יישלחו ההתראות שלו/ה (מצוקה, בקשה לדבר עם אדם). הוא/היא יכולים לשנות את זה בעצמם.</span></label><input id="ph" type="tel" inputmode="tel" placeholder="050-0000000"></div>' +
+      '<label class="check"><input type="checkbox" id="mine"> <span>זה חיבור שלי<span class="hint">רק בחיבור שלך את רואה את תוכן הפניות. בחיבור של מישהו אחר — רק אם הוא פעיל וכמה נענו.</span></span></label>' +
       '<div class="row"><button class="btn btn-primary" type="submit">יצירה</button><button class="btn btn-ghost" type="button" id="cx">ביטול</button></div>' +
       '<div class="err" id="aerr" role="alert"></div>' +
     "</form>";
@@ -208,7 +225,7 @@ function renderAdd() {
   document.getElementById("af").onsubmit = async (e) => {
     e.preventDefault();
     try {
-      const r = await api("/api/tenants", { method: "POST", body: { name: document.getElementById("nm").value, ownerNumber: document.getElementById("ph").value } });
+      const r = await api("/api/tenants", { method: "POST", body: { name: document.getElementById("nm").value, ownerNumber: document.getElementById("ph").value, mine: document.getElementById("mine").checked } });
       box.innerHTML = '<div class="card section">' + secretBlock(r) +
         '<div class="row" style="margin-top:16px"><button class="btn btn-primary" id="open">פתיחת החיבור</button></div></div>';
       document.getElementById("open").onclick = () => { location.hash = "#/c/" + r.tenant.id; };
@@ -242,8 +259,10 @@ async function renderConn(id) {
     '<h1 id="nm"></h1><div id="st" style="margin-bottom:28px"></div>' +
     '<section class="card" id="hero" aria-live="polite"></section>' +
     '<section class="section"><div class="stats" id="stats"></div></section>' +
+    '<section class="card section" id="privacy"></section>' +
+    '<section class="card section"><h2>העסק והתשובות</h2><div id="biz"></div></section>' +
     '<section class="card section"><h2>הגדרות</h2><div id="sets"></div></section>' +
-    '<section class="card section"><h2>דורש את תשומת לבך</h2><div id="flags"></div></section>' +
+    '<section class="card section" id="flagsBox"><h2>דורש את תשומת לבך</h2><div id="flags"></div></section>' +
     '<section class="card section"><h2>ניהול</h2><div class="row" id="mgmt"></div><div id="mgmtOut"></div></section>';
   let lastStatus = null, first = true;
   // בטלפון אי אפשר לסרוק את המסך של עצמו — לכן בטלפון נפתחים על "חיבור עם קוד".
@@ -262,13 +281,24 @@ async function renderConn(id) {
     else if (s.status !== lastStatus) renderHero(s);
     if (s.status !== lastStatus && !first) say((STATUS[s.status] || [, s.status])[1]);
     lastStatus = s.status;
-    document.getElementById("stats").innerHTML = [
-      [s.handled || 0, "הודעות שנענו"], [s.activeChats || 0, "שיחות פעילות"], [s.hot || 0, "ביקשו לדבר איתך"], [s.alerts || 0, "התראות מצוקה"]
-    ].map(([n, l]) => '<div class="stat"><b>' + n + "</b><span>" + l + "</span></div>").join("");
-    document.getElementById("flags").innerHTML = (s.flagged || []).length
-      ? s.flagged.slice(0, 10).map(f => '<div class="flag">' + (f.alert ? "🔴 " : "🟡 ") + "<b>" + esc(phone(f.from) || f.from) + '</b><div class="muted">' + esc(f.text) + "</div></div>").join("")
+    const tiles = d.private
+      ? [[s.handled || 0, "הודעות שנענו"], [s.activeChats || 0, "שיחות פעילות"]]
+      : [[s.handled || 0, "הודעות שנענו"], [s.activeChats || 0, "שיחות פעילות"], [s.hot || 0, "ביקשו לדבר איתך"], [s.unanswered || 0, "שאלות בלי תשובה"]];
+    document.getElementById("stats").innerHTML = tiles.map(([n, l]) => '<div class="stat"><b>' + n + "</b><span>" + l + "</span></div>").join("");
+    document.getElementById("flagsBox").hidden = !!d.private;
+    const ICON = { alert: "🔴", human: "🟡", unanswered: "❔" };
+    const NOTE = { alert: "מצוקה — כדאי לחזור אישית", human: "ביקשו לדבר עם אדם", unanswered: "לא הייתה תשובה בטקסטים — כדאי להוסיף שאלה" };
+    if (!d.private) document.getElementById("flags").innerHTML = (s.flagged || []).length
+      ? s.flagged.slice(0, 12).map(f => '<div class="flag">' + (ICON[f.kind] || "🟡") + " <b>" + esc(phone(f.from) || f.from) + '</b> <span class="muted" style="font-size:14px">· ' + (NOTE[f.kind] || "") + '</span><div>' + esc(f.text) + "</div></div>").join("")
       : '<p class="muted" style="margin:0">אין כרגע פניות שדורשות אותך.</p>';
-    if (first) { renderSettings(t, d.ai); renderMgmt(t); first = false; focusMain(); }
+    if (first) {
+      document.getElementById("privacy").innerHTML = d.private
+        ? '<h2>🔒 פרטיות</h2><p style="margin:0">זה חיבור של מישהו אחר. את רואה רק אם הוא מחובר וכמה הודעות נענו — <b>לא את תוכן השיחות ולא מי פנה</b>. התראות נשלחות רק לטלפון שלו/ה.</p>'
+        : (me.role === "tenant"
+          ? '<h2>🔒 פרטיות</h2><p style="margin:0">רק את/ה רואה את תוכן הפניות שלך. מנהלת המערכת רואה רק אם החיבור פעיל וכמה הודעות נענו. השיחות לא נשמרות בשרת — רק 10 ההודעות האחרונות בזיכרון, ל-48 שעות, ונמחקות.</p>'
+          : '<h2>🔒 פרטיות</h2><p style="margin:0">זה החיבור שלך — רק את רואה את הפניות שלו. השיחות לא נשמרות בשרת: רק 10 ההודעות האחרונות בזיכרון, ל-48 שעות.</p>');
+      renderBiz(t); renderSettings(t, d.ai, d.private); renderMgmt(t); first = false; focusMain();
+    }
   }
 
   function renderHero(s) {
@@ -332,21 +362,107 @@ async function renderConn(id) {
     }
   }
 
+  function renderBiz(t) {
+    const box = document.getElementById("biz");
+    const p = JSON.parse(JSON.stringify(t.profile || { kind: "business", faq: [] }));
+    p.faq = p.faq || [];
+    const f = (key, label, hint, ph, type = "text") =>
+      '<div class="field"><label for="b-' + key + '">' + label + (hint ? '<span class="hint">' + hint + "</span>" : "") + "</label>" +
+      (type === "area"
+        ? '<textarea id="b-' + key + '" rows="3" placeholder="' + esc(ph) + '">' + esc(p[key] || "") + "</textarea>"
+        : '<input id="b-' + key + '" type="' + type + '" placeholder="' + esc(ph) + '" value="' + esc(p[key] || "") + '">') + "</div>";
+    box.innerHTML =
+      '<fieldset class="kind"><legend class="sr">איך הבוט עונה</legend>' +
+        '<label class="opt"><input type="radio" name="kind" value="curemindset"' + (p.kind === "curemindset" ? " checked" : "") + '><span><b>בשיטת CureMindset</b><span class="hint">התשובות הרגשיות של קטי, עם הזמנה לשיחה עם קטי.</span></span></label>' +
+        '<label class="opt"><input type="radio" name="kind" value="business"' + (p.kind !== "curemindset" ? " checked" : "") + '><span><b>לפי העסק שלי</b><span class="hint">הבוט עונה רק לפי מה שכתוב כאן. מה שלא כתוב — הוא לא ממציא, אלא מעביר אלייך.</span></span></label>' +
+      "</fieldset>" +
+      '<div id="bizFields">' +
+        f("businessName", "שם העסק", "", "למשל: סטודיו נועה ליוגה") +
+        f("businessType", "סוג העסק", "", "למשל: סטודיו ליוגה, קוסמטיקאית, עורך דין") +
+        f("about", "במשפט-שניים: מה העסק עושה", "המשפט הראשון מופיע בהודעת הפתיחה.", "שיעורי יוגה לנשים בחיפה, בקבוצות קטנות.", "area") +
+        f("hours", "שעות פעילות", "", "א׳-ה׳ 8:00-21:00") +
+        f("address", "כתובת", "", "הנביאים 12, חיפה") +
+        f("bookingLink", "קישור לקביעת תור / הזמנה", "", "calendly.com/…", "url") +
+        f("website", "אתר", "", "www…", "url") +
+        f("greeting", "הודעת פתיחה", "נשלחת בפנייה הראשונה. אפשר להשאיר ריק.", "היי! כאן נועה 👋") +
+        f("handoffText", "מה לענות כשמבקשים לדבר עם אדם", "", "בשמחה, אני מעבירה לנועה והיא תחזור אלייך היום.") +
+        '<h3 style="font-size:17px;margin:24px 0 6px">שאלות שחוזרות על עצמן</h3>' +
+        '<p class="muted" style="margin:0 0 12px;font-size:15px">כתבי שאלה כמו שלקוחות שואלים, ואת התשובה. הבוט מזהה גם ניסוחים דומים.</p>' +
+        '<div id="faqList"></div><button class="btn btn-ghost" type="button" id="faqAdd">＋ שאלה ותשובה</button>' +
+      "</div>" +
+      '<div class="row" style="margin-top:22px"><button class="btn btn-primary" id="bizSave">שמירה</button><span class="muted" id="bizMsg" role="status"></span></div>' +
+      '<div class="tester"><h3 style="font-size:17px;margin:0 0 6px">בדיקה: מה הבוט יענה?</h3>' +
+        '<p class="muted" style="margin:0 0 12px;font-size:15px">כתבי הודעה כמו לקוח/ה. זה לא נשלח בוואטסאפ, ובודק את מה שכתוב כרגע (גם לפני שמירה).</p>' +
+        '<div id="tlog" class="tlog" aria-live="polite"></div>' +
+        '<form id="tf" class="row" novalidate><label class="sr" for="tin">הודעת בדיקה</label><input id="tin" type="text" placeholder="למשל: כמה עולה שיעור ניסיון?" style="flex:1;min-width:200px">' +
+        '<button class="btn btn-gold" type="submit">שליחה</button><button class="btn btn-ghost" type="button" id="tnew">שיחה חדשה</button></form></div>';
+
+    const fields = ["businessName", "businessType", "about", "hours", "address", "bookingLink", "website", "greeting", "handoffText"];
+    const showFields = () => { document.getElementById("bizFields").hidden = box.querySelector("input[name=kind]:checked").value === "curemindset"; };
+    box.querySelectorAll("input[name=kind]").forEach(r => r.onchange = showFields);
+    showFields();
+
+    function drawFaq() {
+      const list = document.getElementById("faqList");
+      list.innerHTML = p.faq.map((q, i) =>
+        '<div class="faq"><label class="sr" for="fq' + i + '">שאלה ' + (i + 1) + '</label><input id="fq' + i + '" data-i="' + i + '" data-k="q" placeholder="שאלה" value="' + esc(q.q) + '">' +
+        '<label class="sr" for="fa' + i + '">תשובה ' + (i + 1) + '</label><textarea id="fa' + i + '" data-i="' + i + '" data-k="a" rows="2" placeholder="תשובה">' + esc(q.a) + "</textarea>" +
+        '<button class="btn btn-link" type="button" data-del="' + i + '" aria-label="מחיקת שאלה ' + (i + 1) + '">מחיקה</button></div>').join("");
+      list.querySelectorAll("[data-k]").forEach(el => el.oninput = () => { p.faq[+el.dataset.i][el.dataset.k] = el.value; });
+      list.querySelectorAll("[data-del]").forEach(b => b.onclick = () => { p.faq.splice(+b.dataset.del, 1); drawFaq(); });
+    }
+    drawFaq();
+    document.getElementById("faqAdd").onclick = () => { p.faq.push({ q: "", a: "" }); drawFaq(); document.getElementById("fq" + (p.faq.length - 1)).focus(); };
+
+    const draft = () => {
+      const out = { ...p, kind: box.querySelector("input[name=kind]:checked").value };
+      for (const k of fields) out[k] = document.getElementById("b-" + k).value;
+      out.faq = p.faq.filter(x => x.q.trim() && x.a.trim());
+      return out;
+    };
+    document.getElementById("bizSave").onclick = async () => {
+      const msg = document.getElementById("bizMsg");
+      try { const r = await api("/api/tenants/" + encodeURIComponent(id), { method: "PATCH", body: { profile: draft() } }); t.profile = r.tenant.profile; msg.textContent = "נשמר ✓"; say("נשמר"); }
+      catch (er) { msg.textContent = er.message; }
+    };
+
+    let fresh = true;
+    const tlog = document.getElementById("tlog");
+    const bubble = (who, text, tag) => {
+      const d = document.createElement("div"); d.className = "bub " + who; d.textContent = text;
+      if (tag) { const s2 = document.createElement("small"); s2.textContent = tag; d.appendChild(s2); }
+      tlog.appendChild(d); tlog.scrollTop = tlog.scrollHeight;
+    };
+    document.getElementById("tnew").onclick = () => { tlog.innerHTML = ""; fresh = true; document.getElementById("tin").focus(); };
+    document.getElementById("tf").onsubmit = async (e) => {
+      e.preventDefault();
+      const inp = document.getElementById("tin"), text = inp.value.trim();
+      if (!text) return;
+      bubble("me", text); inp.value = "";
+      try {
+        const r = await api("/api/tenants/" + encodeURIComponent(id) + "/preview", { method: "POST", body: { text, profile: draft(), reset: fresh } });
+        fresh = false;
+        bubble("bot", r.reply, r.unanswered ? "לא נמצאה תשובה — יועבר אלייך" : r.human ? "מועבר אלייך" : r.alert ? "התראת מצוקה" : "");
+      } catch (er) { bubble("bot", er.message); }
+    };
+  }
+
   function codeBox(code) {
     return '<div class="secret center" style="margin-top:14px"><div>הקוד להקלדה בוואטסאפ</div>' +
       '<code class="codebig" style="direction:ltr">' + esc(code) + "</code>" +
       '<div class="muted" style="font-size:14px">הקוד תקף לכמה דקות. אם פג — לחצי שוב "קבלת קוד".</div></div>';
   }
 
-  function renderSettings(t, ai) {
+  function renderSettings(t, ai, isPrivate) {
     const sets = document.getElementById("sets");
     const sw = (key, title, sub, on) => '<div class="setting"><div><div class="t" id="l-' + key + '">' + title + '</div><div class="muted" style="font-size:14px">' + sub + "</div></div>" +
       '<button class="switch" role="switch" aria-checked="' + (on ? "true" : "false") + '" aria-labelledby="l-' + key + '" data-key="' + key + '"></button></div>';
     sets.innerHTML =
       sw("active", "המענה האוטומטי פעיל", "כשכבוי — הסוכן לא עונה לאף אחד.", t.settings?.active !== false) +
       sw("onlyNonContacts", "לענות רק לפניות חדשות", "לא עונה לאנשי קשר ששמורים בטלפון (משפחה, חברים, לקוחות קיימים).", t.settings?.onlyNonContacts !== false) +
+      (isPrivate ? "" :
       '<div class="setting" style="display:block"><label for="own">מספר לקבלת התראות<span class="hint">התראות מצוקה ובקשות לדבר עם אדם נשלחות לכאן.</span></label>' +
-      '<div class="row"><input id="own" type="tel" inputmode="tel" style="flex:1;min-width:200px" value="' + esc(phone(t.ownerNumber)) + '"><button class="btn btn-ghost" id="saveOwn">שמירה</button></div></div>' +
+      '<div class="row"><input id="own" type="tel" inputmode="tel" style="flex:1;min-width:200px" value="' + esc(phone(t.ownerNumber)) + '"><button class="btn btn-ghost" id="saveOwn">שמירה</button></div></div>') +
       '<div class="setting"><div><div class="t">מצב התשובות</div><div class="muted" style="font-size:14px">' +
       (ai?.mode === "openai" ? "OpenAI פעיל — תשובות זורמות." : "טקסטים בשיטת CureMindset — חינמי, בלי מפתח. יעבור לבד ל-OpenAI כשיהיה קרדיט.") + "</div></div></div>";
     sets.querySelectorAll(".switch").forEach(b => b.onclick = async () => {
@@ -355,7 +471,7 @@ async function renderConn(id) {
       try { await api("/api/tenants/" + encodeURIComponent(id), { method: "PATCH", body: { settings: { [b.dataset.key]: on } } }); say("נשמר"); }
       catch (er) { b.setAttribute("aria-checked", String(!on)); say(er.message); }
     });
-    document.getElementById("saveOwn").onclick = async (e) => {
+    if (!isPrivate) document.getElementById("saveOwn").onclick = async (e) => {
       try { await api("/api/tenants/" + encodeURIComponent(id), { method: "PATCH", body: { ownerNumber: document.getElementById("own").value } }); e.target.textContent = "נשמר ✓"; say("נשמר"); }
       catch (er) { say(er.message); }
     };

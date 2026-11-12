@@ -29,7 +29,7 @@ const shortDelay = (text) => Math.min(4000, 900 + text.length * 25);
 export class WaSession {
   constructor(tenantId) {
     this.id = tenantId;
-    this.brain = createBrain();
+    this.brain = createBrain(() => getTenant(this.id)?.profile || null);
     this.sock = null;
     this.reconnectAttempts = 0;
     this.stopped = false;
@@ -222,7 +222,8 @@ export class WaSession {
       inner.ephemeralMessage?.message?.extendedTextMessage?.text || inner.ephemeralMessage?.message?.conversation || "";
 
     const audio = inner.audioMessage || content.audioMessage;
-    console.log(`[${this.id}] 📩 ${phoneDigits || jid} | owner:${!!isOwner} | audio:${!!audio} | "${(text || "").slice(0, 50)}"`);
+    // פרטיות: בלוג לא נרשם תוכן ההודעה ולא המספר המלא — רק 3 ספרות אחרונות ואורך.
+    console.log(`[${this.id}] 📩 פנייה …${(phoneDigits || "").slice(-3) || "?"} | owner:${!!isOwner} | audio:${!!audio} | ${(text || "").length} תווים`);
 
     if (!text.trim() && audio) {
       await sock.readMessages([m.key]);
@@ -270,6 +271,8 @@ export class WaSession {
     this.brain.countHandled();
 
     if (out.human) this.brain.pause(convKey, 12);
+    // לא הייתה תשובה בטקסטים של העסק — מסמנים לבעלים כדי שיוסיפו שאלה ותשובה.
+    if (out.unanswered && !out.alert && !out.human) this.brain.flag(phoneDigits || jid.split("@")[0], text.trim(), false, "unanswered");
     if (out.alert || out.human) {
       const from = phoneDigits || jid.split("@")[0];
       this.brain.flag(from, text.trim(), out.alert);

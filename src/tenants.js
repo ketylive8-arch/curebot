@@ -6,6 +6,7 @@
 import fs from "fs";
 import path from "path";
 import crypto from "crypto";
+import { defaultProfile, sanitizeProfile } from "./business.js";
 
 export const DATA_DIR = process.env.DATA_DIR || (fs.existsSync("/data") ? "/data" : path.join(process.cwd(), "data"));
 const FILE = path.join(DATA_DIR, "tenants.json");
@@ -22,6 +23,16 @@ function save(list) {
 }
 
 let tenants = load();
+// הגירה: חיבורים ישנים בלי סימון בעלות — הראשון הוא של קטי (המנהלת), השאר פרטיים.
+if (tenants.length && tenants.every(t => t.adminOwned === undefined)) {
+  tenants.forEach((t, i) => { t.adminOwned = i === 0; });
+  save(tenants);
+}
+// הגירה: חיבור בלי פרופיל — החיבור של קטי עונה בשיטת CureMindset, אחרים כעסק כללי.
+if (tenants.some(t => !t.profile)) {
+  tenants.forEach(t => { if (!t.profile) t.profile = defaultProfile(t.adminOwned ? "curemindset" : "business", t.name); });
+  save(tenants);
+}
 
 export function hashCode(code) {
   const salt = crypto.randomBytes(16).toString("hex");
@@ -57,7 +68,11 @@ export const listTenants = () => tenants.map(publicTenant);
 export const getTenant = (id) => tenants.find(t => t.id === id) || null;
 export const authDirOf = (id) => path.join(DATA_DIR, "tenants", id, "auth");
 
-export function createTenant({ name, ownerNumber }) {
+/**
+ * adminOwned=true: החיבור של קטי עצמה — היא רואה את הפניות שלו.
+ * adminOwned=false (ברירת מחדל): חיבור של מישהו אחר — קטי רואה רק סטטוס ומספרים, אף פעם לא תוכן.
+ */
+export function createTenant({ name, ownerNumber, adminOwned = false, kind }) {
   const id = crypto.randomBytes(5).toString("hex");
   const code = newCode();
   const t = {
@@ -65,6 +80,8 @@ export function createTenant({ name, ownerNumber }) {
     name: String(name || "חיבור חדש").slice(0, 60),
     ownerNumber: normPhone(ownerNumber),
     codeHash: hashCode(code),
+    adminOwned: !!adminOwned,
+    profile: defaultProfile(kind || "business", name),
     settings: { active: true, onlyNonContacts: true },
     createdAt: new Date().toISOString()
   };
@@ -73,11 +90,14 @@ export function createTenant({ name, ownerNumber }) {
   return { tenant: publicTenant(t), code };
 }
 
-export function updateTenant(id, patch) {
+/** byAdmin=true על חיבור פרטי: המנהלת לא יכולה לשנות לאן נשלחות ההתראות (שלא תופנה אליה). */
+export function updateTenant(id, patch, { byAdmin = false } = {}) {
   const t = getTenant(id);
   if (!t) return null;
+  if (byAdmin && !t.adminOwned) delete patch.ownerNumber;
   if (typeof patch.name === "string" && patch.name.trim()) t.name = patch.name.trim().slice(0, 60);
   if (patch.ownerNumber !== undefined) t.ownerNumber = normPhone(patch.ownerNumber);
+  if (patch.profile && typeof patch.profile === "object") t.profile = sanitizeProfile(patch.profile, t.profile);
   if (patch.settings && typeof patch.settings === "object") {
     for (const k of ["active", "onlyNonContacts"]) {
       if (typeof patch.settings[k] === "boolean") t.settings[k] = patch.settings[k];
@@ -111,5 +131,5 @@ export function findByCode(code, id) {
 /** בפעם הראשונה: יוצרים את החיבור של קטי, כדי שהמערכת לא תיפתח ריקה. */
 export function ensureDefaultTenant() {
   if (tenants.length) return null;
-  return createTenant({ name: "קטי שגב · CURE MINDSET", ownerNumber: process.env.OWNER_NUMBER || "972543032349" });
+  return createTenant({ name: "קטי שגב · CURE MINDSET", ownerNumber: process.env.OWNER_NUMBER || "972543032349", adminOwned: true, kind: "curemindset" });
 }
