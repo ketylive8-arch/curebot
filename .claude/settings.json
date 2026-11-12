@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git status*)", "Bash(git log*)", "Bash(git diff*)", "Bash(git show*)", "Bash(git fetch*)",
+      "Bash(node --check*)", "Bash(npm test*)", "Bash(npm install*)", "Bash(ls*)", "Bash(cat*)", "Bash(grep*)",
+      "mcp__Render__list_logs", "mcp__Render__list_deploys", "mcp__Render__get_service", "mcp__Render__list_services",
+      "mcp__Render__list_events", "mcp__Render__get_metrics", "mcp__Render__get_deploy", "mcp__Render__list_workspaces",
+      "mcp__Vercel__list_deployments", "mcp__Vercel__get_deployment", "mcp__Vercel__get_runtime_errors", "mcp__Vercel__get_runtime_logs",
+      "mcp__github__get_me", "mcp__github__list_commits", "mcp__github__get_file_contents"
+    ]
+  }
+}
