@@ -129,6 +129,13 @@ app.post("/api/tenants/:id/disconnect", requireTenantAccess, async (req, res) =>
   res.json({ ok: true });
 });
 
+app.post("/api/tenants/:id/pair", requireTenantAccess, async (req, res) => {
+  const s = getSession(req.params.id);
+  if (!s) return res.status(404).json({ error: "החיבור לא נמצא" });
+  try { res.json({ code: await s.pairingCode(req.body?.phone) }); }
+  catch (e) { res.status(400).json({ error: e.message || "לא הצלחתי ליצור קוד, נסי שוב" }); }
+});
+
 app.post("/api/tenants/:id/reset-code", requireAdmin, (req, res) => {
   const t = getTenant(req.params.id);
   if (!t) return res.status(404).json({ error: "החיבור לא נמצא" });

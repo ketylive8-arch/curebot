@@ -96,6 +96,9 @@ input:focus{border-color:var(--gold);background:#fff;outline:none;box-shadow:0 0
 .flag:first-child{border-top:0}
 .muted{color:var(--muted)}
 .back{display:inline-flex;margin-bottom:18px}
+.tabs{display:flex;gap:4px;background:var(--surface);border-radius:14px;padding:4px;margin:0 0 20px}
+.tabs button{flex:1;border:0;background:transparent;border-radius:11px;min-height:44px;font:inherit;font-size:15px;font-weight:500;color:var(--muted);cursor:pointer;padding:0 10px}
+.tabs button[aria-selected=true]{background:#fff;color:var(--ink);box-shadow:0 1px 3px rgba(0,0,0,.08)}
 .spin{width:28px;height:28px;border-radius:50%;border:3px solid var(--gold-soft);border-top-color:var(--gold);animation:sp 1s linear infinite;margin:0 auto}
 @keyframes sp{to{transform:rotate(360deg)}}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
@@ -243,6 +246,8 @@ async function renderConn(id) {
     '<section class="card section"><h2>דורש את תשומת לבך</h2><div id="flags"></div></section>' +
     '<section class="card section"><h2>ניהול</h2><div class="row" id="mgmt"></div><div id="mgmtOut"></div></section>';
   let lastStatus = null, first = true;
+  // בטלפון אי אפשר לסרוק את המסך של עצמו — לכן בטלפון נפתחים על "חיבור עם קוד".
+  let heroTab = matchMedia("(max-width: 640px)").matches ? "code" : "scan";
 
   async function refresh() {
     let d;
@@ -251,7 +256,10 @@ async function renderConn(id) {
     const t = d.tenant, s = d.status || {};
     document.getElementById("nm").textContent = t.name;
     document.getElementById("st").innerHTML = pill(s.status) + (s.me ? ' <span class="muted" style="margin-inline-start:10px">' + esc(phone(s.me)) + "</span>" : "");
-    if (s.status !== lastStatus || s.status === "qr") renderHero(s);
+    // במצב סריקה לא מציירים מחדש (כדי לא למחוק מה שמקלידים) — רק מחליפים את תמונת ה-QR.
+    const img = document.querySelector("#hero img.qr");
+    if (s.status === "qr" && lastStatus === "qr" && img && s.qrDataUrl) img.src = s.qrDataUrl;
+    else if (s.status !== lastStatus) renderHero(s);
     if (s.status !== lastStatus && !first) say((STATUS[s.status] || [, s.status])[1]);
     lastStatus = s.status;
     document.getElementById("stats").innerHTML = [
@@ -266,18 +274,68 @@ async function renderConn(id) {
   function renderHero(s) {
     const hero = document.getElementById("hero");
     if (s.status === "qr" && s.qrDataUrl) {
-      hero.innerHTML = '<div class="hero"><img class="qr" src="' + s.qrDataUrl + '" alt="קוד QR לחיבור וואטסאפ — סרקי אותו מהטלפון">' +
-        '<div><h2>חיבור הוואטסאפ</h2><ol class="steps">' +
-        "<li><span>פתחי את וואטסאפ בטלפון שרוצים לחבר.</span></li>" +
-        "<li><span>הגדרות ← <b>מכשירים מקושרים</b> ← <b>קישור מכשיר</b>.</span></li>" +
-        "<li><span>כווני את המצלמה לקוד. זהו — הסוכן מתחיל לענות.</span></li></ol>" +
-        '<p class="muted" style="font-size:14px;margin:8px 0 0">את הדף הזה פותחים במחשב או בטאבלט, וסורקים מהטלפון. הקוד מתחדש לבד.</p></div></div>';
+      hero.innerHTML =
+        "<h2>חיבור הוואטסאפ</h2>" +
+        '<div class="tabs" role="tablist" aria-label="דרך החיבור">' +
+          '<button role="tab" id="t-code" aria-controls="p-code">בטלפון בלבד — עם קוד</button>' +
+          '<button role="tab" id="t-scan" aria-controls="p-scan">ממחשב — סריקת QR</button>' +
+        "</div>" +
+        '<div id="p-code" role="tabpanel" aria-labelledby="t-code">' +
+          '<ol class="steps">' +
+          "<li><span>כתבי כאן את מספר הוואטסאפ שרוצים לחבר, ולחצי <b>קבלת קוד</b>.</span></li>" +
+          "<li><span>בוואטסאפ: <b>הגדרות</b> ← <b>מכשירים מקושרים</b> ← <b>קישור מכשיר</b>.</span></li>" +
+          "<li><span>למטה במסך הסריקה: <b>״קישור באמצעות מספר טלפון במקום זאת״</b> — והקלידי את הקוד.</span></li></ol>" +
+          '<form id="pf" class="row" style="margin-top:12px" novalidate><label class="sr" for="pph">מספר הוואטסאפ לחיבור</label>' +
+          '<input id="pph" type="tel" inputmode="tel" autocomplete="tel" placeholder="054-0000000" style="flex:1;min-width:190px">' +
+          '<button class="btn btn-primary" type="submit">קבלת קוד</button></form>' +
+          '<div class="err" id="perr" role="alert"></div><div id="pcode" aria-live="polite"></div>' +
+        "</div>" +
+        '<div id="p-scan" role="tabpanel" aria-labelledby="t-scan"><div class="hero">' +
+          '<img class="qr" src="' + s.qrDataUrl + '" alt="קוד QR לחיבור וואטסאפ — סרקי אותו מהטלפון">' +
+          '<div><ol class="steps">' +
+          "<li><span>פתחי את הדף הזה במחשב או בטאבלט.</span></li>" +
+          "<li><span>בטלפון, בוואטסאפ: <b>הגדרות</b> ← <b>מכשירים מקושרים</b> ← <b>קישור מכשיר</b>.</span></li>" +
+          "<li><span>כווני את הטלפון לקוד שעל המסך. זהו — הסוכן מתחיל לענות.</span></li></ol>" +
+          '<p class="muted" style="font-size:14px;margin:8px 0 0">הקוד מתחדש לבד כל כמה שניות.</p></div></div></div>';
+      const tabs = { code: ["t-code", "p-code"], scan: ["t-scan", "p-scan"] };
+      const show = (k) => {
+        heroTab = k;
+        for (const [name, [tb, pn]] of Object.entries(tabs)) {
+          const on = name === k;
+          document.getElementById(tb).setAttribute("aria-selected", String(on));
+          document.getElementById(tb).tabIndex = on ? 0 : -1;
+          document.getElementById(pn).hidden = !on;
+        }
+      };
+      document.getElementById("t-code").onclick = () => show("code");
+      document.getElementById("t-scan").onclick = () => show("scan");
+      hero.querySelector(".tabs").onkeydown = (e) => {
+        if (e.key === "ArrowLeft" || e.key === "ArrowRight") { const k = heroTab === "code" ? "scan" : "code"; show(k); document.getElementById(tabs[k][0]).focus(); }
+      };
+      show(heroTab);
+      if (s.pairingCode) document.getElementById("pcode").innerHTML = codeBox(s.pairingCode);
+      document.getElementById("pf").onsubmit = async (e) => {
+        e.preventDefault();
+        const btn = e.target.querySelector("button"), err = document.getElementById("perr");
+        btn.disabled = true; err.textContent = "";
+        try {
+          const r = await api("/api/tenants/" + encodeURIComponent(id) + "/pair", { method: "POST", body: { phone: document.getElementById("pph").value } });
+          document.getElementById("pcode").innerHTML = codeBox(r.code); say("הקוד מוכן: " + r.code.split("").join(" "));
+        } catch (er) { err.textContent = er.message; }
+        finally { btn.disabled = false; }
+      };
     } else if (s.status === "connected") {
       hero.innerHTML = '<div class="center"><div class="big-ok" aria-hidden="true">✓</div><h2 style="margin:16px 0 4px">מחובר ועונה</h2>' +
         '<p class="muted" style="margin:0">הסוכן עונה עכשיו לפניות שמגיעות ל-' + esc(phone(s.me)) + ".</p></div>";
     } else {
       hero.innerHTML = '<div class="center"><div class="spin" aria-hidden="true"></div><p class="muted" style="margin:16px 0 0">' + esc(s.lastEvent || "מתחבר…") + "</p></div>";
     }
+  }
+
+  function codeBox(code) {
+    return '<div class="secret center" style="margin-top:14px"><div>הקוד להקלדה בוואטסאפ</div>' +
+      '<code class="codebig" style="direction:ltr">' + esc(code) + "</code>" +
+      '<div class="muted" style="font-size:14px">הקוד תקף לכמה דקות. אם פג — לחצי שוב "קבלת קוד".</div></div>';
   }
 
   function renderSettings(t, ai) {

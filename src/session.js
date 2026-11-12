@@ -103,6 +103,7 @@ export class WaSession {
       if (connection === "open") {
         this.state.status = "connected";
         this.state.qrDataUrl = null;
+        this.state.pairingCode = null;
         this.state.me = sock.user?.id?.split(":")[0] || null;
         this.state.lastEvent = "מחובר ועונה";
         this.reconnectAttempts = 0;
@@ -158,12 +159,30 @@ export class WaSession {
     this.state.lastEvent = "החיבור נעצר";
   }
 
+  /**
+   * חיבור בלי סריקה — מהטלפון לבד: וואטסאפ נותן "קישור באמצעות מספר טלפון",
+   * ושם מקלידים את הקוד בן 8 התווים שאנחנו מבקשים כאן עבור המספר.
+   */
+  async pairingCode(phone) {
+    let d = String(phone || "").replace(/\D/g, "");
+    if (!d) throw new Error("צריך להזין את מספר הוואטסאפ שרוצים לחבר");
+    d = d.startsWith("972") ? d : "972" + d.replace(/^0/, "");
+    if (!/^972\d{8,9}$/.test(d)) throw new Error("מספר הטלפון לא נראה תקין");
+    if (this.state.status === "connected") throw new Error("החיבור הזה כבר מחובר");
+    if (this.state.status !== "qr" || !this.sock) throw new Error("החיבור עוד מתכונן — נסי שוב בעוד כמה שניות");
+    const raw = await this.sock.requestPairingCode(d);
+    const code = String(raw).replace(/[^A-Z0-9]/gi, "").toUpperCase();
+    this.state.pairingCode = code.length === 8 ? `${code.slice(0, 4)}-${code.slice(4)}` : code;
+    this.state.lastEvent = "ממתין להקלדת הקוד בטלפון";
+    return this.state.pairingCode;
+  }
+
   /** ניתוק מוואטסאפ + מחיקת פרטי ההתחברות → QR חדש לסריקה */
   async disconnect() {
     try { await this.sock?.logout(); } catch { /* ignore */ }
     this.closeSocket();
     try { fs.rmSync(authDirOf(this.id), { recursive: true, force: true }); } catch { /* ignore */ }
-    this.state = { ...this.state, status: "starting", qrDataUrl: null, me: null, lastEvent: "יוצר קוד QR חדש…" };
+    this.state = { ...this.state, status: "starting", qrDataUrl: null, pairingCode: null, me: null, lastEvent: "יוצר קוד QR חדש…" };
     await this.start();
   }
 
