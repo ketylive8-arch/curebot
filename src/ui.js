@@ -91,7 +91,7 @@ input:focus{border-color:var(--gold);background:#fff;outline:none;box-shadow:0 0
 .switch[aria-checked=true]::after{inset-inline-start:23px}
 .secret{background:var(--gold-soft);border-radius:16px;padding:20px;margin-top:16px}
 .secret code{display:block;font:500 15px/1.5 ui-monospace,SFMono-Regular,monospace;word-break:break-all;direction:ltr;text-align:left;background:#fff;border-radius:10px;padding:10px 12px;margin:6px 0 10px}
-.secret .codebig{font-size:30px;letter-spacing:.3em;text-align:center}
+.secret .codebig{font-size:clamp(22px,7.5vw,30px);letter-spacing:.18em;text-align:center;white-space:nowrap;overflow-x:auto}
 .flag{padding:14px 0;border-top:1px solid var(--line);font-size:15px}
 .flag:first-child{border-top:0}
 .muted{color:var(--muted)}
