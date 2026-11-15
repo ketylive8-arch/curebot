@@ -2,13 +2,15 @@
 import { NextRequest } from "next/server";
 import { store } from "@/lib/redis";
 import { addFollowup, listFollowups, setFollowupStatus } from "@/lib/followups";
+import { googleCalendarLink } from "@/lib/calendar";
 
 export const runtime = "nodejs";
 const ok = (req: NextRequest) => !!process.env.ADMIN_KEY && req.nextUrl.searchParams.get("key") === process.env.ADMIN_KEY;
 
 export async function GET(req: NextRequest) {
   if (!ok(req)) return new Response("Forbidden", { status: 403 });
-  return Response.json({ followups: await listFollowups(100) });
+  const list = await listFollowups(100);
+  return Response.json({ followups: list.map((f) => ({ ...f, calendarLink: googleCalendarLink(f) })) });
 }
 
 export async function POST(req: NextRequest) {

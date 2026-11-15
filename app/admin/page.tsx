@@ -72,7 +72,7 @@ export default function Admin() {
   const [waPhone, setWaPhone] = useState("0543032349");
   const [waConfirmLogout, setWaConfirmLogout] = useState(false);
   const [autoPaired, setAutoPaired] = useState(false);
-  const [fus, setFus] = useState<{ id: string; key: string; kind: string; due: number; note: string; name?: string; phone?: string; status: string; result?: string }[]>([]);
+  const [fus, setFus] = useState<{ id: string; key: string; kind: string; due: number; note: string; name?: string; phone?: string; status: string; result?: string; inCalendar?: boolean; calendarLink?: string }[]>([]);
 
   const [pushState, setPushState] = useState<"" | "on" | "busy" | "denied" | "unsupported" | "ios-install">("");
   const [pendingConv, setPendingConv] = useState("");
@@ -312,7 +312,12 @@ export default function Admin() {
                 {" · "}{f.kind === "callback" ? "לחזור ל" : "פולואפ להצעה ל"}{f.name || pretty(f.phone) || "פונה"}
                 {f.note && <span style={{ color: "#6b6560" }}> · "{f.note.slice(0, 60)}"</span>}
               </span>
-              <button onClick={() => fuAction({ id: f.id, action: "cancel" })} style={{ ...btn, background: "#efe7d6" }}>ביטול</button>
+              <span style={{ display: "flex", gap: 6 }}>
+                {f.inCalendar
+                  ? <span style={{ fontSize: 12.5, color: "#2e7d4f", alignSelf: "center" }}>✓ ביומן</span>
+                  : f.calendarLink && <a href={f.calendarLink} target="_blank" rel="noopener noreferrer" style={{ ...btn, background: "#e9f1e6", textDecoration: "none", color: "#2b2723" }}>📅 ליומן</a>}
+                <button onClick={() => fuAction({ id: f.id, action: "cancel" })} style={{ ...btn, background: "#efe7d6" }}>ביטול</button>
+              </span>
             </div>
           ))}
         </div>

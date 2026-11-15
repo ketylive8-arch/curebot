@@ -6,6 +6,7 @@ import { kv } from "./kv";
 import { store } from "./redis";
 import { notifyKety } from "./push";
 import { prettyPhone } from "./leads";
+import { sendCalendarTask } from "./calendar";
 
 export type Followup = {
   id: string;
@@ -18,6 +19,7 @@ export type Followup = {
   status: "pending" | "done" | "sent" | "cancelled";
   created: number;
   result?: string;
+  inCalendar?: boolean;
 };
 
 const TZ = "Asia/Jerusalem";
@@ -46,6 +48,8 @@ export async function addFollowup(f: Omit<Followup, "id" | "status" | "created">
   const item: Followup = { ...f, id: randomBytes(5).toString("hex"), status: "pending", created: Date.now() };
   await kv.set(`fu:item:${item.id}`, item, 120 * 24 * 3600);
   await kv.zadd("fu:all", item.due, item.id);
+  // משימה ביומן Google של קטי (הזמנת יומן במייל)
+  sendCalendarTask(item).then(async (ok) => { if (ok) await kv.set(`fu:item:${item.id}`, { ...item, inCalendar: true }, 120 * 24 * 3600); }).catch(() => {});
   return item;
 }
 

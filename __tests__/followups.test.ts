@@ -37,3 +37,15 @@ describe("בקשת חזרה בשיחה", () => {
     expect(new Date(f!.due).toISOString()).toBe("2026-11-15T08:00:00.000Z");
   });
 });
+
+describe("משימות ביומן", () => {
+  it("בונה הזמנת יומן וקישור Google עם הזמן הנכון", async () => {
+    const { inviteIcs, googleCalendarLink } = await import("../lib/calendar");
+    const f = { id: "abc", key: "whatsapp:972501234567", kind: "callback" as const, due: Date.UTC(2026, 10, 15, 8, 0), note: "ביום ראשון בעשר", name: "אסה", phone: "972501234567", status: "pending" as const, created: 0 };
+    const ics = inviteIcs(f, "kety@example.com");
+    expect(ics).toContain("DTSTART:20261115T080000Z");
+    expect(ics).toContain("METHOD:REQUEST");
+    expect(ics).toContain("SUMMARY:📞 לחזור לאסה · 050-123-4567");
+    expect(googleCalendarLink(f)).toContain("dates=20261115T080000Z%2F20261115T081500Z");
+  });
+});
