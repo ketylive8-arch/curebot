@@ -220,6 +220,9 @@ export class WaSession {
     const NOT_A_REPLY = ["reactionMessage", "protocolMessage", "senderKeyDistributionMessage", "pollUpdateMessage", "keepInChatMessage", "pinInChatMessage", "encReactionMessage"];
     if (!kinds.length || kinds.every(k => NOT_A_REPLY.includes(k))) return;
     this.brain.pause(jid, 12);
+    // אותה שיחה יכולה להופיע גם בכתובת @lid וגם בכתובת הטלפון — עוצרים את שתיהן.
+    const altJid = m.key?.remoteJidAlt;
+    if (typeof altJid === "string" && altJid !== jid && /@(s\.whatsapp\.net|lid)$/.test(altJid)) this.brain.pause(altJid, 12);
     console.log(`[${this.id}] ענית בעצמך בשיחה …${jid.split("@")[0].slice(-3)} — הבוט יוצא ממנה ל-12 שעות`);
   }
 
@@ -273,8 +276,9 @@ export class WaSession {
     const jid = m.key?.remoteJid;
     if (!jid || jid === "status@broadcast" || jid.endsWith("@g.us") || jid.endsWith("@broadcast") || jid.endsWith("@newsletter")) return;
 
-    // וואטסאפ עברה לכתובות @lid; כתובת הטלפון האמיתית מגיעה ב-senderPn.
-    const senderPn = m.key?.senderPn || null;
+    // וואטסאפ עברה לכתובות @lid; כתובת הטלפון האמיתית מגיעה ב-remoteJidAlt (גרסה 7) או senderPn (ישן).
+    const alt = [m.key?.remoteJidAlt, m.key?.senderPn].find(x => typeof x === "string" && x.endsWith("@s.whatsapp.net"));
+    const senderPn = alt || null;
     const replyJid = jid.endsWith("@lid") && senderPn ? senderPn : jid;
     const pnSource = senderPn || (jid.endsWith("@s.whatsapp.net") ? jid : "");
     const phoneDigits = pnSource ? pnSource.split("@")[0].replace(/\D/g, "") : "";
