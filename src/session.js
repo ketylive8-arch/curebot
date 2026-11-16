@@ -96,7 +96,12 @@ export class WaSession {
   }
   registerContacts(contacts) {
     if (!Array.isArray(contacts)) return;
-    for (const c of contacts) if (c?.id && c.name) this.savedContacts.add(c.id);
+    // רק אנשי קשר מספר הטלפונים (שם מלא שנשמר בטלפון). שם שמגיע מסנכרון היסטוריית צ'אטים
+    // הוא לרוב השם שהפונה בחר לעצמו — לא אומר שהוא שמור, ולכן לא נספר כאן.
+    for (const c of contacts) {
+      if (!c?.id || !c.name) continue;
+      for (const j of [c.id, c.lid, c.phoneNumber]) if (typeof j === "string" && /@(s\.whatsapp\.net|lid)$/.test(j)) this.savedContacts.add(j);
+    }
   }
 
   closeSocket() {
@@ -126,7 +131,8 @@ export class WaSession {
     sock.ev.on("contacts.set", ({ contacts }) => this.registerContacts(contacts));
     sock.ev.on("contacts.upsert", (c) => this.registerContacts(c));
     sock.ev.on("contacts.update", (c) => this.registerContacts(c));
-    sock.ev.on("messaging-history.set", ({ contacts }) => this.registerContacts(contacts));
+    // לא נרשמים אנשי קשר מ-messaging-history.set: בגרסה 7 כל צ'אט שם נראה כמו "איש קשר עם שם",
+    // וזה גרם לבוט לדלג על פונים חדשים (…110, …951, …783 ב-16.11).
 
     sock.ev.on("connection.update", async (u) => {
       if (sock !== this.sock) return; // אירוע מסוקט ישן
