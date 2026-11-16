@@ -195,6 +195,11 @@ async function callOpenAI(systemPrompt, messages) {
   }
 }
 
+/** טקסט חופשי מ-OpenAI (למשל יצירת שאלות ותשובות). זורק שגיאה אם אין קרדיט. */
+export async function aiText(systemPrompt, userText) {
+  return callOpenAI(systemPrompt, [{ role: "user", content: userText }]);
+}
+
 const MAX_TURNS = 10;
 const TTL_MS = 48 * 60 * 60 * 1000;
 

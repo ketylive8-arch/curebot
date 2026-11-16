@@ -104,6 +104,8 @@ textarea:focus{border-color:var(--gold);background:#fff;outline:none;box-shadow:
 .opt{border:1px solid var(--line);border-radius:16px;padding:16px;margin-bottom:10px}
 .opt:has(input:checked){border-color:var(--gold);background:var(--gold-soft)}
 .faq{display:grid;gap:8px;padding:14px;border:1px solid var(--line);border-radius:16px;margin-bottom:10px}
+.genbox{background:var(--gold-soft);border-radius:16px;padding:16px;margin:0 0 14px}
+textarea.todo{border-color:var(--gold);background:#FFFBF2}
 .faq .btn-link{justify-self:start;min-height:32px;color:var(--red)}
 .tester{margin-top:28px;padding-top:22px;border-top:1px solid var(--line)}
 .tlog{display:flex;flex-direction:column;gap:8px;max-height:320px;overflow-y:auto;margin-bottom:12px}
@@ -302,8 +304,14 @@ async function renderConn(id) {
             return '<div class="lead"><div class="lead-top"><b>' + esc(phone(l.from) || l.from) + "</b>" + '<span class="pill ' + c + '"><i aria-hidden="true"></i>' + lab + "</span></div>" +
               '<div class="muted" style="font-size:14px">📍 ' + esc(l.source?.label || "לא ידוע") + " · " + ago(l.lastAt) + (l.count > 1 ? " · " + l.count + " הודעות" : "") + "</div>" +
               (l.preview ? '<div class="lead-text">' + esc(l.preview) + "</div>" : "") +
-              (l.status === "skipped" && l.reason ? '<div class="muted" style="font-size:14px">למה: ' + esc(l.reason) + "</div>" : "") + "</div>"; }).join("")
+              (l.status === "skipped" && l.reason ? '<div class="muted" style="font-size:14px">למה: ' + esc(l.reason) + "</div>" : "") +
+              (l.status === "skipped" && /נלקחה ידנית|עצר בה/.test(l.reason || "") ? '<button class="btn btn-ghost resume" data-key="' + esc(l.key) + '" style="min-height:40px;margin-top:8px">החזרת הבוט לשיחה</button>' : "") + "</div>"; }).join("")
         : '<p class="muted" style="margin:0">עוד אין פניות מאז ההפעלה האחרונה של הבוט.</p>';
+      document.querySelectorAll("#leads .resume").forEach(b => b.onclick = async () => {
+        b.disabled = true;
+        try { await api("/api/tenants/" + encodeURIComponent(id) + "/resume", { method: "POST", body: { key: b.dataset.key } }); b.textContent = "הבוט חזר לשיחה ✓"; say("הבוט חזר לשיחה"); }
+        catch (er) { b.disabled = false; say(er.message); }
+      });
     }
     if (!d.private) document.getElementById("flags").innerHTML = (s.flagged || []).length
       ? s.flagged.slice(0, 12).map(f => '<div class="flag">' + (ICON[f.kind] || "🟡") + " <b>" + esc(phone(f.from) || f.from) + '</b> <span class="muted" style="font-size:14px">· ' + (NOTE[f.kind] || "") + '</span><div>' + esc(f.text) + "</div></div>").join("")
@@ -405,6 +413,8 @@ async function renderConn(id) {
         f("handoffText", "מה לענות כשמבקשים לדבר עם אדם", "", "בשמחה, אני מעבירה לנועה והיא תחזור אלייך היום.") +
         '<h3 style="font-size:17px;margin:24px 0 6px">שאלות שחוזרות על עצמן</h3>' +
         '<p class="muted" style="margin:0 0 12px;font-size:15px">כתבי שאלה כמו שלקוחות שואלים, ואת התשובה. הבוט מזהה גם ניסוחים דומים.</p>' +
+        '<div class="genbox"><button class="btn btn-gold" type="button" id="genBtn">✨ צרי לי שאלות ותשובות מהתיאור</button>' +
+        '<p class="muted" id="genMsg" role="status" style="margin:8px 0 0;font-size:14px">לפי "מה העסק עושה" וסוג העסק. אחר כך רק עוברים, מתקנים ושומרים.</p></div>' +
         '<div id="faqList"></div><button class="btn btn-ghost" type="button" id="faqAdd">＋ שאלה ותשובה</button>' +
       "</div>" +
       '<div class="row" style="margin-top:22px"><button class="btn btn-primary" id="bizSave">שמירה</button><span class="muted" id="bizMsg" role="status"></span></div>' +
@@ -423,12 +433,30 @@ async function renderConn(id) {
       const list = document.getElementById("faqList");
       list.innerHTML = p.faq.map((q, i) =>
         '<div class="faq"><label class="sr" for="fq' + i + '">שאלה ' + (i + 1) + '</label><input id="fq' + i + '" data-i="' + i + '" data-k="q" placeholder="שאלה" value="' + esc(q.q) + '">' +
-        '<label class="sr" for="fa' + i + '">תשובה ' + (i + 1) + '</label><textarea id="fa' + i + '" data-i="' + i + '" data-k="a" rows="2" placeholder="תשובה">' + esc(q.a) + "</textarea>" +
+        '<label class="sr" for="fa' + i + '">תשובה ' + (i + 1) + '</label><textarea id="fa' + i + '" data-i="' + i + '" data-k="a" rows="2" placeholder="תשובה"' + (/\\[להשלים/.test(q.a) ? ' class="todo" aria-describedby="todoNote"' : "") + ">" + esc(q.a) + "</textarea>" +
         '<button class="btn btn-link" type="button" data-del="' + i + '" aria-label="מחיקת שאלה ' + (i + 1) + '">מחיקה</button></div>').join("");
       list.querySelectorAll("[data-k]").forEach(el => el.oninput = () => { p.faq[+el.dataset.i][el.dataset.k] = el.value; });
       list.querySelectorAll("[data-del]").forEach(b => b.onclick = () => { p.faq.splice(+b.dataset.del, 1); drawFaq(); });
     }
     drawFaq();
+    document.getElementById("genBtn").onclick = async (e) => {
+      const btn = e.currentTarget, msg = document.getElementById("genMsg");
+      btn.disabled = true; msg.textContent = "יוצרת טיוטה…";
+      try {
+        const r = await api("/api/tenants/" + encodeURIComponent(id) + "/generate", { method: "POST", body: { profile: draft() } });
+        const have = new Set(p.faq.map(x => x.q.trim()));
+        const added = r.faq.filter(x => !have.has(x.q.trim()));
+        p.faq.push(...added);
+        if (!document.getElementById("b-greeting").value.trim() && r.greeting) document.getElementById("b-greeting").value = r.greeting;
+        if (!document.getElementById("b-handoffText").value.trim() && r.handoffText) document.getElementById("b-handoffText").value = r.handoffText;
+        drawFaq();
+        const todo = p.faq.filter(x => /\\[להשלים/.test(x.a)).length;
+        msg.textContent = (r.source === "ai" ? "✨ ה-AI כתב " : "✨ נוצרו מתבניות חכמות (חינמי) ") + added.length + " שאלות ותשובות." +
+          (todo ? " השלימי את מה שמסומן [להשלים] — הבוט לא ישלח תשובה כזו עד שתושלם." : "") + " אל תשכחי ללחוץ שמירה.";
+        say(msg.textContent);
+      } catch (er) { msg.textContent = er.message; }
+      finally { btn.disabled = false; }
+    };
     document.getElementById("faqAdd").onclick = () => { p.faq.push({ q: "", a: "" }); drawFaq(); document.getElementById("fq" + (p.faq.length - 1)).focus(); };
 
     const draft = () => {

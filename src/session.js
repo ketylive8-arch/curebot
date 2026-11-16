@@ -196,7 +196,7 @@ export class WaSession {
     const now = Date.now();
     for (const [k, v] of this.leads) if (now - v.lastAt > 48 * 3600 * 1000) this.leads.delete(k);
     const l = this.leads.get(key) || { from: phone, firstAt: now, count: 0, source: null };
-    Object.assign(l, patch, { lastAt: now });
+    Object.assign(l, patch, { lastAt: now, key });
     if (patch.count) l.count = (this.leads.get(key)?.count || 0) + 1;
     if (patch.source && (!l.source || patch.source.kind === "ad")) l.source = patch.source;
     this.leads.set(key, l);
@@ -215,7 +215,12 @@ export class WaSession {
     if (!jid || jid.endsWith("@g.us") || jid.includes("broadcast") || jid.endsWith("@newsletter")) return;
     if (this.sentIds.has(m.key.id)) return;          // זו הודעה שהבוט שלח
     if (this.state.me && jid.startsWith(this.state.me)) return; // צ'אט עם עצמי
+    // אימוג'י-תגובה (❤️ על הודעה), עריכה/מחיקה והודעות מערכת — זו לא תשובה. רק הודעה אמיתית מוציאה את הבוט.
+    const kinds = Object.keys(m.message || {}).filter(k => k !== "messageContextInfo");
+    const NOT_A_REPLY = ["reactionMessage", "protocolMessage", "senderKeyDistributionMessage", "pollUpdateMessage", "keepInChatMessage", "pinInChatMessage", "encReactionMessage"];
+    if (!kinds.length || kinds.every(k => NOT_A_REPLY.includes(k))) return;
     this.brain.pause(jid, 12);
+    console.log(`[${this.id}] ענית בעצמך בשיחה …${jid.split("@")[0].slice(-3)} — הבוט יוצא ממנה ל-12 שעות`);
   }
 
   async stop() {
@@ -321,11 +326,21 @@ export class WaSession {
     }
 
     if (!text.trim() && audio) {
-      await sock.readMessages([m.key]);
-      await sock.sendPresenceUpdate("composing", replyJid);
+      // קודם בודקים אם מותר לענות בשיחה הזו בכלל (נלקחה ידנית / איש קשר שמור / חסום)
+      const why = isOwner ? "" : this.gateReason({ jid, replyJid, phoneDigits });
+      if (why) {
+        console.log(`[${this.id}] לא עונה (הקלטה): ${why}`);
+        this.trackLead(replyJid, phoneDigits || jid.split("@")[0], { status: "skipped", reason: why });
+        return;
+      }
       const spoken = await transcribe(m, log);
       if (!spoken) {
-        await this.safeSend(replyJid, jid, { text: isOwner ? "לא הצלחתי לתמלל את ההקלטה. אפשר לכתוב לי?" : "לא הצלחתי לשמוע את ההקלטה 🙏 אפשר לכתוב לי במקום?" });
+        // בלי תמלול (אין קרדיט ב-OpenAI): מבקשים לכתוב — פעם אחת בשעה לכל היותר, לא על כל הקלטה
+        if (Date.now() - (this.nudged.get(replyJid) || 0) > 3600 * 1000) {
+          this.nudged.set(replyJid, Date.now());
+          await sock.readMessages([m.key]);
+          await this.safeSend(replyJid, jid, { text: isOwner ? "לא הצלחתי לתמלל את ההקלטה. אפשר לכתוב לי?" : "קיבלתי את ההקלטה 🙏 כרגע נוח לי יותר בכתב — אפשר לכתוב לי במילים?" });
+        }
         return;
       }
       text = spoken;
@@ -437,6 +452,17 @@ export class WaSession {
 
   /** האם מותר לענות לפונה הזה עכשיו? (חסימה, מושהה, איש קשר שמור, שיחה שנלקחה ידנית) */
   gate(args) { return !this.gateReason(args); }
+
+  /** "החזר את הבוט לשיחה" — מבטל יציאה ידנית / עצירת הצפה בשיחה אחת. */
+  resumeChat(key) {
+    if (!key) return false;
+    this.brain.pause(key, 0);
+    this.cooldown.delete(key);
+    const l = this.leads.get(key);
+    if (l) { l.status = "waiting"; l.reason = undefined; }
+    console.log(`[${this.id}] הבוט חזר לשיחה …${String(key).split("@")[0].slice(-3)}`);
+    return true;
+  }
   /** מחזיר את הסיבה שלא עונים (מחרוזת), או "" אם מותר לענות. */
   gateReason({ jid, replyJid, phoneDigits }) {
     const tenant = this.tenant;

@@ -116,6 +116,31 @@ for (let i = 0; i < 8; i++) await s.handleMessage(inMsg("972530000009", "שאל�
 ok(sent.length - b3 === 6, "loop/flood: max 6 answers per chat in 10 minutes (" + (sent.length - b3) + ")");
 ok(/הגנה מחסימה/.test(s.view().leads.find(l => l.from === "972530000009")?.reason || ""), "loop/flood: reason shown to owner");
 
+// 20. my emoji reaction (❤️) on a lead's message is NOT a manual reply → bot stays in
+const react = { key: { remoteJid: "972540000373@s.whatsapp.net", fromMe: true, id: "R1" }, messageTimestamp: now(), message: { reactionMessage: { text: "❤️" } } };
+if (s.isFresh(react)) s.noteManualReply(react);
+const b4 = sent.length;
+await s.handleMessage(inMsg("972540000373", "היי, רציתי לשאול על הליווי לבת שלי"));
+ok(sent.length === b4 + 1, "my emoji reaction does not take the bot out of the chat");
+
+// 21. when I really reply, the bot steps out — and voice notes there get NO automatic reply
+const mine = { key: { remoteJid: "972540000374@s.whatsapp.net", fromMe: true, id: "R2" }, messageTimestamp: now(), message: { conversation: "היי, אני אחזור אלייך" } };
+if (s.isFresh(mine)) s.noteManualReply(mine);
+const b5 = sent.length;
+await s.handleMessage({ key: { remoteJid: "972540000374@s.whatsapp.net", fromMe: false, id: "V1" }, messageTimestamp: now(), message: { audioMessage: { seconds: 12 } } });
+await s.handleMessage(inMsg("972540000374", "תודה"));
+ok(sent.length === b5, "after I really reply: bot silent, including voice notes");
+
+// 22. "bring the bot back" button
+s.resumeChat("972540000374@s.whatsapp.net");
+await s.handleMessage(inMsg("972540000374", "יש לי עוד שאלה על הסדנה"));
+ok(sent.length === b5 + 1, "bring-back button → bot answers again");
+
+// 23. voice notes with no transcription → asks to write ONCE, not on every recording
+const b6 = sent.length;
+for (const id of ["V2", "V3", "V4"]) await s.handleMessage({ key: { remoteJid: "972540000375@s.whatsapp.net", fromMe: false, id }, messageTimestamp: now(), message: { audioMessage: { seconds: 8 } } });
+ok(sent.length === b6 + 1 && sent.at(-1).text.includes("בכתב"), "3 voice notes → one gentle 'please write'");
+
 // 12. skipped lead records the reason
 s.savedContacts.add("972513434343@s.whatsapp.net");
 await s.handleMessage(inMsg("972513434343", "מה נשמע"));

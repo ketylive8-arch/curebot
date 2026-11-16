@@ -23,6 +23,15 @@ export function defaultProfile(kind, name = "") {
     website: "",
     greeting: "",
     handoffText: "",
+    // שאלון העסק — ככל שהוא מדויק יותר, השאלות והתשובות שנוצרות מדויקות יותר
+    audience: "",   // קהל יעד
+    problems: "",   // עם מה לקוחות מגיעים / מה רוצים לפתור
+    services: "",   // השירותים העיקריים
+    unique: "",     // מה מייחד את העסק
+    priceRange: "", // מחירים / טווח
+    process: "",    // איך נראה התהליך / הפגישה הראשונה
+    format: "",     // קליניקה / זום / הגעה ללקוח / משלוחים
+    area: "",       // אזור שירות
     faq: []
   };
 }
@@ -33,7 +42,8 @@ export function sanitizeProfile(input, prev) {
   if (!input || typeof input !== "object") return p;
   if (input.kind === "curemindset" || input.kind === "business") p.kind = input.kind;
   for (const k of ["businessName", "businessType", "hours", "address"]) if (input[k] !== undefined) p[k] = clip(input[k], LIM.short);
-  for (const k of ["greeting", "handoffText"]) if (input[k] !== undefined) p[k] = clip(input[k], LIM.mid);
+  for (const k of ["greeting", "handoffText", "audience", "unique", "priceRange", "format", "area"]) if (input[k] !== undefined) p[k] = clip(input[k], LIM.mid);
+  for (const k of ["problems", "services", "process"]) if (input[k] !== undefined) p[k] = clip(input[k], LIM.long);
   if (input.about !== undefined) p.about = clip(input.about, LIM.long);
   for (const k of ["bookingLink", "website"]) {
     if (input[k] === undefined) continue;
@@ -58,10 +68,13 @@ function tokens(s) {
     .map(w => (w.length > 3 && /^[והבלמשכ]/.test(w) ? w.slice(1) : w))
     .filter(w => w.length > 1 && !STOP.has(w));
 }
+// תשובה שעוד מסומנת "[להשלים …]" (טיוטה אוטומטית שלא הושלמה) — לעולם לא נשלחת ללקוח.
+const draftLeft = (s) => /\[להשלים/.test(String(s || ""));
+
 function bestFaq(faq, text) {
   const tt = new Set(tokens(text));
   let best = null, bestScore = 0;
-  for (const f of faq || []) {
+  for (const f of (faq || []).filter(x => !draftLeft(x.a))) {
     const qt = [...new Set(tokens(f.q))];
     if (!qt.length) continue;
     const hit = qt.filter(w => tt.has(w) || [...tt].some(x => x.length > 3 && (x.includes(w) || w.includes(x)))).length;
@@ -90,10 +103,11 @@ export function businessReply(p, userText, chat) {
     return R("שמחים שכתבת, ואת/ה לא לבד 💛 אם זה דחוף או קשה מאוד עכשיו — ער\"ן זמינים 24/7 בטלפון 1201, ובמצב חירום מד\"א 101. נעביר את הפנייה גם לצוות.", { alert: true, human: true });
   }
   if (has(t, HUMAN)) {
-    return R(p.handoffText || `בשמחה — אני מעבירה את הפנייה ל${name}, ויחזרו אלייך בהקדם 🙏`, { human: true });
+    return R((!draftLeft(p.handoffText) && p.handoffText) || `בשמחה — אני מעבירה את הפנייה ל${name}, ויחזרו אלייך בהקדם 🙏`, { human: true });
   }
 
-  const hello = first ? (p.greeting || `היי! כאן ${name} 👋`) : "";
+  const greet = draftLeft(p.greeting) ? "" : p.greeting;
+  const hello = first ? (greet || `היי! כאן ${name} 👋`) : "";
   const join = (body) => (hello ? `${hello}\n\n${body}` : body);
 
   const f = bestFaq(p.faq, t);
@@ -107,7 +121,7 @@ export function businessReply(p, userText, chat) {
   // הודעה ראשונה כללית ("היי", "שאלה") — פתיחה חמה ושאלה אחת
   if (first && tokens(t).length <= 2) {
     const intro = p.about ? `${p.about.split(/[.\n]/)[0].trim()}.` : "";
-    return R(`${p.greeting || `היי! כאן ${name} 👋`}${intro ? "\n" + intro : ""}\nאיך אפשר לעזור?`);
+    return R(`${greet || `היי! כאן ${name} 👋`}${intro ? "\n" + intro : ""}\nאיך אפשר לעזור?`);
   }
 
   // אין תשובה בטקסטים — לא ממציאים. מעבירים לצוות ומסמנים לבעל/ת העסק.
@@ -124,7 +138,7 @@ export function businessPrompt(p) {
     p.bookingLink && `קישור לקביעה/הזמנה: ${p.bookingLink}`,
     p.website && `אתר: ${p.website}`,
     p.greeting && `הודעת פתיחה מועדפת: ${p.greeting}`,
-    p.faq?.length && "שאלות ותשובות (המידע היחיד שמותר להסתמך עליו):\n" + p.faq.map(f => `ש: ${f.q}\nת: ${f.a}`).join("\n"),
+    p.faq?.length && "שאלות ותשובות (המידע היחיד שמותר להסתמך עליו):\n" + p.faq.filter(f => !draftLeft(f.a)).map(f => `ש: ${f.q}\nת: ${f.a}`).join("\n"),
     "",
     "כללים:",
     "- עברית טבעית וחמה, 2-4 שורות, שאלה אחת לכל היותר. בלי שפה של רובוט.",

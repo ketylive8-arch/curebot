@@ -10,6 +10,7 @@ import { listTenants, getTenant, createTenant, updateTenant, resetCode, removeTe
 import { startSession, getSession, dropSession } from "./session.js";
 import { aiState, diagnoseOpenAI, createBrain } from "./brain.js";
 import { sanitizeProfile } from "./business.js";
+import { generateDraft } from "./generate.js";
 
 // יציבות: שגיאה בודדת של Baileys/הצפנה לא מפילה את כל השרת.
 process.on("uncaughtException", (e) => console.error("[server] uncaughtException:", e?.message || e));
@@ -141,6 +142,26 @@ app.post("/api/tenants/:id/pair", requireTenantAccess, async (req, res) => {
   if (!s) return res.status(404).json({ error: "החיבור לא נמצא" });
   try { res.json({ code: await s.pairingCode(req.body?.phone) }); }
   catch (e) { res.status(400).json({ error: e.message || "לא הצלחתי ליצור קוד, נסי שוב" }); }
+});
+
+// "החזר את הבוט לשיחה" — אחרי שיצא ממנה (ענית בעצמך) או נעצר (הצפה).
+app.post("/api/tenants/:id/resume", requireTenantAccess, (req, res) => {
+  const s = getSession(req.params.id);
+  const key = String(req.body?.key || "");
+  if (!s || !/^[\w.:-]+@(s\.whatsapp\.net|lid)$/.test(key)) return res.status(400).json({ error: "שיחה לא תקינה" });
+  s.resumeChat(key);
+  res.json({ ok: true });
+});
+
+// "צור לי שאלות ותשובות": מתוך תיאור העסק (טיוטה — לא נשמרת עד שלוחצים שמירה).
+app.post("/api/tenants/:id/generate", requireTenantAccess, async (req, res) => {
+  const t = getTenant(req.params.id);
+  if (!t) return res.status(404).json({ error: "החיבור לא נמצא" });
+  const p = sanitizeProfile(req.body?.profile || {}, t.profile);
+  if (!(p.about || "").trim() && !(p.businessType || "").trim()) {
+    return res.status(400).json({ error: "קודם כתבי במשפט-שניים מה העסק עושה (או את סוג העסק)" });
+  }
+  res.json(await generateDraft(p));
 });
 
 // "בדיקת תשובה": מקלידים הודעה כמו לקוח/ה ורואים מה הבוט יענה — בלי לשלוח בוואטסאפ.
