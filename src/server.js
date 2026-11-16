@@ -11,6 +11,8 @@ import { startSession, getSession, dropSession } from "./session.js";
 import { aiState, diagnoseOpenAI, createBrain } from "./brain.js";
 import { sanitizeProfile } from "./business.js";
 import { generateDraft } from "./generate.js";
+import crypto from "node:crypto";
+import { notifyOwner } from "./notify.js";
 
 // יציבות: שגיאה בודדת של Baileys/הצפנה לא מפילה את כל השרת.
 process.on("uncaughtException", (e) => console.error("[server] uncaughtException:", e?.message || e));
@@ -197,6 +199,22 @@ app.delete("/api/tenants/:id", requireAdmin, async (req, res) => {
   await dropSession(req.params.id);
   removeTenant(req.params.id);
   res.json({ ok: true });
+});
+
+// התראה לקטי מסוכן (מאיה וכו'): טקסט + קולי, רק למספר של קטי. מוגן במפתח NOTIFY_KEY.
+app.post("/api/notify", async (req, res) => {
+  const key = String(req.get("x-notify-key") || "");
+  const want = process.env.NOTIFY_KEY || "";
+  const ok = want && key.length === want.length && crypto.timingSafeEqual(Buffer.from(key), Buffer.from(want));
+  if (!ok) return res.status(401).json({ error: "אין הרשאה" });
+  const text = String(req.body?.text || "").trim().slice(0, 3000);
+  if (!text) return res.status(400).json({ error: "חסר טקסט" });
+  try {
+    const out = await notifyOwner({ text, voice: req.body?.voice !== false, speech: req.body?.speech ? String(req.body.speech).slice(0, 3500) : undefined });
+    res.json({ ok: true, ...out });
+  } catch (e) {
+    res.status(503).json({ error: e.message });
+  }
 });
 
 app.use((_req, res) => res.status(404).json({ error: "לא נמצא" }));
