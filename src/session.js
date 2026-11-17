@@ -269,7 +269,11 @@ export class WaSession {
   async safeSend(primaryJid, altJid, payload) {
     let lastErr = null;
     for (const t of [...new Set([primaryJid, altJid].filter(Boolean))]) {
-      try { await this.send(t, payload); return t; }
+      try {
+        await this.send(t, payload);
+        console.log(`[${this.id}] ✉️ נשלחה תשובה ל…${String(t).split("@")[0].slice(-3)} (${String(payload?.text || "").length} תווים)`);
+        return t;
+      }
       catch (e) { lastErr = e; console.error(`[${this.id}] שליחה ל-${t} נכשלה: ${e.message}`); }
     }
     throw lastErr || new Error("send failed");
