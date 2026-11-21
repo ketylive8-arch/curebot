@@ -65,6 +65,8 @@ export class WaSession {
     this.state = { status: "starting", qrDataUrl: null, me: null, lastEvent: "מתחיל…", handled: 0 };
     this.savedContacts = new Set();
     this.msgStore = new Map();   // לבקשות retry של וואטסאפ
+    this.fromMeTexts = new Map();  // נוסח הודעה שנשלחה מהטלפון → באילו צ'אטים (לזיהוי הודעות אוטומטיות)
+    this.autoPaused = new Map();   // נוסח → צ'אטים שהוצאו בגללו (משוחררים אם יתברר שהוא אוטומטי)
     this.sentIds = new Set();    // הודעות שהבוט עצמו שלח — כדי לזהות כשקטי עונה ידנית
     this.lastReadable = new Map(); // jid → מתי הגיעה הודעה שפוענחה (להודעות שלא פוענחו)
     this.nudged = new Map();       // jid → מתי ענינו לתמונה בלי מילים (פעם בשעה לכל היותר)
@@ -225,11 +227,36 @@ export class WaSession {
     const kinds = Object.keys(m.message || {}).filter(k => k !== "messageContextInfo");
     const NOT_A_REPLY = ["reactionMessage", "protocolMessage", "senderKeyDistributionMessage", "pollUpdateMessage", "keepInChatMessage", "pinInChatMessage", "encReactionMessage"];
     if (!kinds.length || kinds.every(k => NOT_A_REPLY.includes(k))) return;
+    const altJid = typeof m.key?.remoteJidAlt === "string" && /@(s\.whatsapp\.net|lid)$/.test(m.key.remoteJidAlt) && m.key.remoteJidAlt !== jid ? m.key.remoteJidAlt : null;
+    const pn = [jid, altJid].find(x => x?.endsWith("@s.whatsapp.net")) || jid;
+    const tail = `…${pn.split("@")[0].slice(-3)}`;
+
+    // הודעה אוטומטית מהטלפון (הודעת פתיחה / "לא זמינה" של וואטסאפ ביזנס, תשובה מהירה קבועה):
+    // אותו נוסח בדיוק שנשלח לכמה צ'אטים שונים = לא קטי שעונה אישית. לא מוציאה את הבוט,
+    // ומחזירה את הבוט לשיחות שהנוסח הזה כבר הוציא אותו מהן.
+    const inner = m.message?.ephemeralMessage?.message || m.message || {};
+    const txt = String(inner.conversation || inner.extendedTextMessage?.text || inner.imageMessage?.caption || "").replace(/\s+/g, " ").trim();
+    if (txt.length >= 12) {
+      const sig = txt.slice(0, 200);
+      const seen = this.fromMeTexts.get(sig) || new Set();
+      seen.add(pn);
+      this.fromMeTexts.set(sig, seen);
+      if (this.fromMeTexts.size > 300) this.fromMeTexts.delete(this.fromMeTexts.keys().next().value);
+      if (seen.size >= 2) {
+        for (const k of this.autoPaused.get(sig) || []) this.brain.pause(k, 0);
+        console.log(`[${this.id}] הודעה אוטומטית מהטלפון בשיחה ${tail} (אותו נוסח בכמה צ'אטים) — הבוט נשאר בשיחה`);
+        return;
+      }
+      const list = this.autoPaused.get(sig) || [];
+      list.push(jid); if (altJid) list.push(altJid);
+      this.autoPaused.set(sig, list);
+      if (this.autoPaused.size > 300) this.autoPaused.delete(this.autoPaused.keys().next().value);
+    }
+
     this.brain.pause(jid, 12);
     // אותה שיחה יכולה להופיע גם בכתובת @lid וגם בכתובת הטלפון — עוצרים את שתיהן.
-    const altJid = m.key?.remoteJidAlt;
-    if (typeof altJid === "string" && altJid !== jid && /@(s\.whatsapp\.net|lid)$/.test(altJid)) this.brain.pause(altJid, 12);
-    console.log(`[${this.id}] ענית בעצמך בשיחה …${jid.split("@")[0].slice(-3)} — הבוט יוצא ממנה ל-12 שעות`);
+    if (altJid) this.brain.pause(altJid, 12);
+    console.log(`[${this.id}] ענית בעצמך בשיחה ${tail} — הבוט יוצא ממנה ל-12 שעות (${kinds.join(",")}, ${txt.length} תווים)`);
   }
 
   async stop() {
