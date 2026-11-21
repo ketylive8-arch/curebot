@@ -265,7 +265,10 @@ export function createBrain(getProfile = () => null) {
       const R = (reply, extra = {}) => ({ reply, ended: false, alert: false, human: false, infoCard: false, ...extra });
       const site = isBiz ? (profile.website || profile.bookingLink || "") : SITE;
       const booking = isBiz ? (profile.bookingLink || "") : CALENDLY;
-      const kind = classifyMessage(userText);
+      // בשיחה שכבר מתנהלת (הבוט ענה והאדם ממשיך לכתוב) — לא מסווגים כספאם/פרסום.
+      // אדם אמיתי באמצע שיחה יכול לשלוח הודעה ארוכה עם קישורים, וזה לא סיבה להפסיק לענות לו.
+      const ongoing = !chat.promoAsked && chat.history.length >= 2;
+      const kind = ongoing ? "normal" : classifyMessage(userText);
       if (chat.promoAsked && !chat.promoResolved) {
         // שאלנו "זה בעקבות עניין בשירות?" — עכשיו מקשיבים לתשובה
         if (isYes(userText)) {
