@@ -79,22 +79,25 @@ ok(adLead && adLead.source.kind === "ad" && adLead.source.label.includes("אינ
 await s.handleMessage(inMsg("972512323232", "היי קטי! אשמח לקבוע שיחה ראשונית"));
 ok(s.view().leads.find(l => l.from === "972512323232")?.source.kind === "site", "website button lead: source = site");
 
-// 13. someone advertising their own business → one polite question + site
+// 13. someone advertising their own business → no reply at all (ads are not leads)
 const before = sent.length;
 await s.handleMessage(inMsg("972520000001", "היי! אני מתמחה בבניית אתרים לעסקים 🚀 מבצע מיוחד רק השבוע — 30% הנחה! לפרטים: www.webpro.co.il 050-1234567"));
-ok(sent.length === before + 1 && sent.at(-1).text.includes("פנית בעקבות עניין בליווי שלי") && sent.at(-1).text.includes("ketysegev.com"), "business ad → asks politely if interested + site");
-await s.handleMessage(inMsg("972520000001", "רק להזכיר, המבצע נגמר מחר! הנחה של 30% על בניית אתר 🔥 www.webpro.co.il"));
-ok(sent.length === before + 1, "second ad from same person → ignored");
-
-// 14. ad, then "yes" → site + intro meeting link
 await s.handleMessage(inMsg("972520000002", "שירותי קידום בגוגל ושיווק דיגיטלי לעסקים, מחיר מיוחד! www.seo.co.il"));
-await s.handleMessage(inMsg("972520000002", "כן, בעצם אני מתעניינת"));
-ok(sent.at(-1).text.includes("ketysegev.com") && sent.at(-1).text.includes("calendly"), "ad → 'yes' → site + intro meeting");
-
-// 15. ad, then "no" → polite goodbye
 await s.handleMessage(inMsg("972520000003", "ביטוח רכב בהנחה של 20%! לפרטים 052-7654321 www.bit.co.il"));
-await s.handleMessage(inMsg("972520000003", "לא תודה"));
-ok(sent.at(-1).text.includes("בסדר גמור"), "ad → 'no' → polite goodbye");
+ok(sent.length === before, "business ads → ignored, nothing sent");
+ok(/פרסומת/.test(s.view().leads.find(l => l.from === "972520000001")?.reason || ""), "ignored ad shows why in recent leads");
+
+// 14. couriers, verification codes, automated notices → ignored
+await s.handleMessage(inMsg("972520000010", "שלום, אני השליח של החבילה שלך, אני למטה ליד הבניין"));
+await s.handleMessage(inMsg("972520000011", "קוד האימות שלך הוא 482913. אין להעביר אותו לאף אחד"));
+await s.handleMessage(inMsg("972520000012", "הזמנתך מספר 55123 התקבלה. הודעה אוטומטית, אין להשיב"));
+await s.handleMessage(inMsg("972520000013", "החבילה שלך בדרך! מספר מעקב RR123456789IL"));
+ok(sent.length === before, "courier / OTP / automated order notice → ignored");
+
+// 15. a message that another bot of THIS system sent (alert / test reply) → never answered
+s.markSent("BOTMSG1");
+await s.handleMessage({ key: { remoteJid: "972542306016@s.whatsapp.net", fromMe: false, id: "BOTMSG1" }, messageTimestamp: now(), message: { conversation: "🟡 ביקשו לדבר איתך" } });
+ok(sent.length === before, "message sent by another bot of the system → not answered (no bot loop)");
 
 // 16. clear spam → ignored, nothing sent
 const b2 = sent.length;
@@ -140,6 +143,28 @@ ok(sent.length === b5 + 1, "bring-back button → bot answers again");
 const b6 = sent.length;
 for (const id of ["V2", "V3", "V4"]) await s.handleMessage({ key: { remoteJid: "972540000375@s.whatsapp.net", fromMe: false, id }, messageTimestamp: now(), message: { audioMessage: { seconds: 8 } } });
 ok(sent.length === b6 + 1 && sent.at(-1).text.includes("בכתב"), "3 voice notes → one gentle 'please write'");
+
+// 24. a business connection answers its own customers by its profile — and a customer asking about deliveries is a lead
+const { tenant: bt } = createTenant({ name: "פיצה טובה", ownerNumber: "0501231234", kind: "business" });
+updateTenant(bt.id, { profile: { businessName: "פיצה טובה", about: "פיצרייה בתל אביב", hours: "א-ה 12:00-23:00", faq: [{ q: "יש לכם משלוחים?", a: "כן! משלוחים בכל תל אביב עד 23:00 🍕" }] } });
+const bs = new WaSession(bt.id);
+const bsent = [];
+bs.sock = { user: { id: "972501231111:3@s.whatsapp.net" }, sendMessage: async (to, p) => { bsent.push({ to, text: p.text }); }, readMessages: async () => {}, sendPresenceUpdate: async () => {} };
+bs.state.me = "972501231111";
+await bs.handleMessage(inMsg("972520000020", "היי, יש לכם משלוחים לרמת אביב?"));
+ok(bsent.length === 1 && bsent[0].text.includes("משלוחים בכל תל אביב"), "business: customer asking about delivery → answered from the business FAQ");
+await bs.handleMessage(inMsg("972520000021", "שלום אני השליח של וולט, החבילה שלך ממתינה בלובי"));
+ok(bsent.length === 1, "business: courier message → ignored");
+
+// 25. watchdog: a number that was connected and dropped for >10 minutes → alert; a fresh unscanned one → no alert
+const { checkAll } = await import("../src/watchdog.js");
+s.everConnected = true; s.state.status = "qr"; s.downSince = Date.now() - 11 * 60000;
+bs.state.status = "qr"; // never connected
+const alerts = checkAll(Date.now(), (id) => (id === tenant.id ? s : id === bt.id ? bs : null));
+ok(alerts.length === 1 && alerts[0].id === tenant.id && alerts[0].msg.includes("לסרוק מחדש"), "watchdog: dropped number → one alert with what to do");
+ok(checkAll(Date.now(), (id) => (id === tenant.id ? s : null)).length === 0, "watchdog: no repeated alert within 6 hours");
+s.state.status = "connected";
+ok(checkAll(Date.now(), (id) => (id === tenant.id ? s : null))[0]?.msg.includes("חזר"), "watchdog: back online → 'reconnected' notice");
 
 // 12. skipped lead records the reason
 s.savedContacts.add("972513434343@s.whatsapp.net");

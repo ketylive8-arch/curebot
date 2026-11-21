@@ -13,6 +13,7 @@ import { sanitizeProfile } from "./business.js";
 import { generateDraft } from "./generate.js";
 import crypto from "node:crypto";
 import { notifyOwner } from "./notify.js";
+import { startWatchdog } from "./watchdog.js";
 
 // יציבות: שגיאה בודדת של Baileys/הצפנה לא מפילה את כל השרת.
 process.on("uncaughtException", (e) => console.error("[server] uncaughtException:", e?.message || e));
@@ -53,7 +54,11 @@ function sendPage(req, res, tenantHint = "") {
 }
 
 // ── דפים ──
-app.get("/health", (_req, res) => res.json({ ok: true }));
+// בלי פרטים מזהים: כמה חיבורים מחוברים מתוך כמה (לבדיקה מבחוץ שהכל עובד).
+app.get("/health", (_req, res) => {
+  const all = listTenants().map(t => getSession(t.id)?.state.status || "stopped");
+  res.json({ ok: true, connected: all.filter(x => x === "connected").length, total: all.length });
+});
 
 app.get("/", (req, res) => {
   // תאימות לקישור הישן (?key=...) — נכנסים ומנקים את הקוד מהכתובת.
@@ -227,4 +232,5 @@ app.listen(PORT, () => {
     startSession(t.id).catch(e => console.error(`[${t.id}] start:`, e.message));
   }
   diagnoseOpenAI();
+  startWatchdog();
 });

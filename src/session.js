@@ -35,6 +35,9 @@ const shortDelay = (text) => Math.min(6500, 1800 + text.length * 22 + Math.rando
 const DEBOUNCE_MS = Number(process.env.DEBOUNCE_MS ?? 7000);
 const MAX_PER_CHAT_10MIN = Number(process.env.MAX_PER_CHAT_10MIN || 6);
 const MAX_PER_HOUR = Number(process.env.MAX_PER_HOUR || 40);
+// מזהי כל ההודעות שהבוטים של המערכת שלחו (מכל החיבורים). כשבוט של חיבור אחד שולח לחיבור
+// אחר (התראה לבעלים, תשובה להודעת בדיקה) — הבוט שמקבל לא עונה לו. כך אין שיחת בוט-מול-בוט.
+const BOT_SENT = new Set();
 const COOLDOWN_REASON = "יותר מדי תשובות לאותה שיחה ב-10 דקות — הבוט עצר בה לשעה (הגנה מחסימה)";
 
 // מאיפה הגיעה הפנייה: מודעה בפייסבוק/אינסטגרם (וואטסאפ מצרף להודעה את פרטי המודעה),
@@ -89,6 +92,8 @@ export class WaSession {
     if (!id) return;
     this.sentIds.add(id);
     if (this.sentIds.size > 2000) this.sentIds.delete(this.sentIds.values().next().value);
+    BOT_SENT.add(id);
+    if (BOT_SENT.size > 5000) BOT_SENT.delete(BOT_SENT.values().next().value);
   }
   /** שליחה עם מזהה שאנחנו יוצרים מראש — כך ההד של ההודעה לא ייחשב כ"תשובה ידנית" */
   async send(to, payload) {
@@ -151,6 +156,8 @@ export class WaSession {
         this.state.me = sock.user?.id?.split(":")[0] || null;
         this.state.lastEvent = "מחובר ועונה";
         this.reconnectAttempts = 0;
+        this.everConnected = true;
+        this.downSince = 0;
         console.log(`[${this.id}] מחובר כ-${this.state.me}`);
         // בדיקת שליחה אמיתית (רק כשמוגדר SELFTEST_TO): הודעה אחת לצ'אט "אני" של החיבור הראשי,
         // פעם אחת להפעלה — מוכיחה בשטח שהשליחה עובדת, בלי לפנות לאף אדם אחר.
@@ -171,6 +178,8 @@ export class WaSession {
         this.state.status = "disconnected";
         this.state.me = loggedOut ? null : this.state.me;
         this.state.lastEvent = loggedOut ? "המכשיר נותק מוואטסאפ — יוצר קוד QR חדש" : "החיבור נפל לרגע — מתחבר מחדש";
+        this.downSince = this.downSince || Date.now();
+        if (loggedOut) this.loggedOutAt = Date.now();
         console.log(`[${this.id}] ${this.state.lastEvent} (קוד ${code})`);
         if (this.stopped) return;
         if (loggedOut) {
@@ -312,6 +321,10 @@ export class WaSession {
     if (!sock || !tenant) return;
     const jid = m.key?.remoteJid;
     if (!jid || jid === "status@broadcast" || jid.endsWith("@g.us") || jid.endsWith("@broadcast") || jid.endsWith("@newsletter")) return;
+    if (m.key?.id && BOT_SENT.has(m.key.id)) {
+      console.log(`[${this.id}] לא עונה: הודעה שבוט אחר של המערכת שלח (התראה / תשובה) — לא מנהלים שיחת בוטים`);
+      return;
+    }
 
     // וואטסאפ עברה לכתובות @lid; כתובת הטלפון האמיתית מגיעה ב-remoteJidAlt (גרסה 7) או senderPn (ישן).
     const alt = [m.key?.remoteJidAlt, m.key?.senderPn].find(x => typeof x === "string" && x.endsWith("@s.whatsapp.net"));
@@ -417,7 +430,7 @@ export class WaSession {
     // מחכים כמה שניות — אם האדם שולח עוד הודעות ברצף, עונים פעם אחת על הכל (כמו אדם).
     const p = this.pending.get(convKey) || { texts: [], keys: [] };
     p.texts.push(text.trim()); p.keys.push(m.key);
-    Object.assign(p, { jid, replyJid, phoneDigits, owner });
+    Object.assign(p, { jid, replyJid, phoneDigits, owner, business: p.business || !!m.verifiedBizName });
     clearTimeout(p.timer);
     this.pending.set(convKey, p);
     if (DEBOUNCE_MS <= 0) { this.pending.delete(convKey); return this.reply(convKey, p); }
@@ -457,7 +470,7 @@ export class WaSession {
       return;
     }
 
-    const out = await this.brain.think(convKey, text.trim());
+    const out = await this.brain.think(convKey, text.trim(), { business: !!p.business });
     if (out.ignore) {
       // ספאם / פרסום חוזר — לא עונים ולא מסמנים כנקרא (שיישאר לקטי למחוק)
       console.log(`[${this.id}] לא עונה: ${out.reason}`);

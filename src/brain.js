@@ -1,5 +1,5 @@
 import { SYSTEM_PROMPT, CALENDLY, SITE } from "./prompt.js";
-import { classifyMessage, isYes, isNo } from "./classify.js";
+import { classifyMessage } from "./classify.js";
 import { businessReply, businessPrompt } from "./business.js";
 
 // בוחר וריאציה אקראית — כדי שהתשובות לא יישמעו תבניתיות אלא אנושיות ומגוונות.
@@ -255,47 +255,22 @@ export function createBrain(getProfile = () => null) {
     },
 
     /** @returns {{reply:string, ended:boolean, alert:boolean, human:boolean, infoCard:boolean}} */
-    async think(jid, userText) {
+    async think(jid, userText, hints = {}) {
       const chat = getChat(jid);
       // לכל חיבור הפרופיל שלו: השיטה של קטי, או עסק אחר שעונה לפי הטקסטים של בעליו.
       const profile = getProfile() || { kind: "curemindset" };
       const isBiz = profile.kind === "business";
 
-      // ── קודם מבינים מה זו ההודעה: ספאם / פרסום של עסק / פנייה אמיתית ──
-      const R = (reply, extra = {}) => ({ reply, ended: false, alert: false, human: false, infoCard: false, ...extra });
-      const site = isBiz ? (profile.website || profile.bookingLink || "") : SITE;
-      const booking = isBiz ? (profile.bookingLink || "") : CALENDLY;
+      // ── קודם מבינים מה זו ההודעה: ספאם / פרסום / הודעה אוטומטית / פנייה אמיתית ──
       // בשיחה שכבר מתנהלת (הבוט ענה והאדם ממשיך לכתוב) — לא מסווגים כספאם/פרסום.
       // אדם אמיתי באמצע שיחה יכול לשלוח הודעה ארוכה עם קישורים, וזה לא סיבה להפסיק לענות לו.
-      const ongoing = !chat.promoAsked && chat.history.length >= 2;
-      const kind = ongoing ? "normal" : classifyMessage(userText);
-      if (chat.promoAsked && !chat.promoResolved) {
-        // שאלנו "זה בעקבות עניין בשירות?" — עכשיו מקשיבים לתשובה
-        if (isYes(userText)) {
-          chat.promoResolved = true;
-          const reply = isBiz
-            ? `מעולה 🙂${site ? `\nכל הפרטים כאן: ${site}` : ""}${booking && booking !== site ? `\nולקביעה: ${booking}` : ""}`
-            : `מעולה 💛 כאן אפשר לקרוא עוד על הדרך שלי: ${SITE}\nואם מתאים לך, אפשר לקבוע שיחת היכרות קצרה, בלי עלות ובלי התחייבות:\n${CALENDLY}`;
-          remember(chat, userText, reply);
-          return R(reply);
-        }
-        if (isNo(userText)) {
-          chat.promoResolved = true;
-          remember(chat, userText, "בסדר גמור, תודה ויום טוב 🙏");
-          return R("בסדר גמור, תודה ויום טוב 🙏", { ended: true });
-        }
-        if (kind !== "normal") return { reply: "", ignore: true, reason: "פרסום — כבר שאלנו פעם אחת, לא ממשיכים" };
-        chat.promoResolved = true; // כתבו משהו אמיתי — ממשיכים כרגיל
-      }
+      const ongoing = chat.history.length >= 2;
+      const kind = ongoing ? "normal" : classifyMessage(userText, hints);
+      // לא עונים לפרסומות, ספאם, שליחים, קודי אימות והודעות אוטומטיות — רק לאנשים שמתעניינים בשירות.
+      // (ההודעה נשארת לא-נקראה בטלפון, ומופיעה ב"פניות אחרונות" עם הסיבה.)
       if (kind === "spam") return { reply: "", ignore: true, reason: "נראה כמו ספאם או דיוור — לא עונים" };
-      if (kind === "promo") {
-        chat.promoAsked = true;
-        const reply = isBiz
-          ? `היי, תודה שכתבת 🙂 רק כדי לדייק — זה בעקבות עניין ב${profile.businessName || "שירות שלנו"}?${site ? ` אם כן, כל הפרטים כאן: ${site}` : ""}`
-          : `היי, תודה שכתבת 🙂 רק כדי לדייק — פנית בעקבות עניין בליווי שלי? אם כן, אפשר לקרוא עוד כאן: ${SITE}\nואשמח לשמוע מה מביא אותך.`;
-        remember(chat, userText, reply);
-        return R(reply);
-      }
+      if (kind === "auto") return { reply: "", ignore: true, reason: "הודעה אוטומטית / שליח / קוד אימות — לא עונים" };
+      if (kind === "promo") return { reply: "", ignore: true, reason: "פרסומת של עסק אחר — לא עונים" };
       let raw = "";
       try {
         raw = await callOpenAI(isBiz ? businessPrompt(profile) : SYSTEM_PROMPT, [...chat.history, { role: "user", content: userText }]);
