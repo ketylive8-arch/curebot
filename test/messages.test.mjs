@@ -79,22 +79,24 @@ ok(adLead && adLead.source.kind === "ad" && adLead.source.label.includes("אינ
 await s.handleMessage(inMsg("972512323232", "היי קטי! אשמח לקבוע שיחה ראשונית"));
 ok(s.view().leads.find(l => l.from === "972512323232")?.source.kind === "site", "website button lead: source = site");
 
-// 13. someone advertising their own business → one polite question + site
+// 13. someone advertising their own business / offering a service → filtered, no reply at all
 const before = sent.length;
 await s.handleMessage(inMsg("972520000001", "היי! אני מתמחה בבניית אתרים לעסקים 🚀 מבצע מיוחד רק השבוע — 30% הנחה! לפרטים: www.webpro.co.il 050-1234567"));
-ok(sent.length === before + 1 && sent.at(-1).text.includes("פנית בעקבות עניין בליווי שלי") && sent.at(-1).text.includes("ketysegev.com"), "business ad → asks politely if interested + site");
-await s.handleMessage(inMsg("972520000001", "רק להזכיר, המבצע נגמר מחר! הנחה של 30% על בניית אתר 🔥 www.webpro.co.il"));
-ok(sent.length === before + 1, "second ad from same person → ignored");
-
-// 14. ad, then "yes" → site + intro meeting link
 await s.handleMessage(inMsg("972520000002", "שירותי קידום בגוגל ושיווק דיגיטלי לעסקים, מחיר מיוחד! www.seo.co.il"));
-await s.handleMessage(inMsg("972520000002", "כן, בעצם אני מתעניינת"));
-ok(sent.at(-1).text.includes("ketysegev.com") && sent.at(-1).text.includes("calendly"), "ad → 'yes' → site + intro meeting");
-
-// 15. ad, then "no" → polite goodbye
 await s.handleMessage(inMsg("972520000003", "ביטוח רכב בהנחה של 20%! לפרטים 052-7654321 www.bit.co.il"));
-await s.handleMessage(inMsg("972520000003", "לא תודה"));
-ok(sent.at(-1).text.includes("בסדר גמור"), "ad → 'no' → polite goodbye");
+await s.handleMessage(inMsg("972520000011", "אנחנו מציעים שירות ניקיון לבית במחיר מיוחד"));
+ok(sent.length === before, "ads / service offers → filtered, no reply");
+
+// 14. courier, bank, "remove me" and unrelated chit-chat → filtered
+await s.handleMessage(inMsg("972520000012", "השליח בדרך, החבילה שלך תגיע היום עד 18:00"));
+await s.handleMessage(inMsg("972520000013", "נא לעדכן את פרטי חשבון הבנק שלך בקישור"));
+await s.handleMessage(inMsg("972520000014", "להסרה השב הסר"));
+await s.handleMessage(inMsg("972520000015", "מה שלומך? ראיתי שהעברת את הדירה, אולי ניפגש בשבוע הבא לקפה ונעשה ברביקיו"));
+ok(sent.length === before, "courier / bank / removal / unrelated → filtered");
+
+// 15. numbers starting with +1 (Base44 agents, automations) → never answered
+await s.handleMessage(inMsg("15551234567", "היי, אשמח לפרטים על הליווי"));
+ok(sent.length === before && /\+1/.test(s.view().leads.find(l => l.from === "15551234567")?.reason || ""), "+1 number → not answered, reason shown");
 
 // 16. clear spam → ignored, nothing sent
 const b2 = sent.length;

@@ -8,6 +8,7 @@ import { Boom } from "@hapi/boom";
 import pino from "pino";
 import QRCode from "qrcode";
 import fs from "fs";
+import path from "path";
 import { createBrain } from "./brain.js";
 import { transcribe } from "./transcribe.js";
 import { handleCommand, ownerContext, OWNER_SYSTEM, localManageReply } from "./owner.js";
@@ -25,6 +26,8 @@ const log = pino({ level: "warn" });
 const digitsSet = (v) => new Set(String(v || "").split(",").map(s => s.replace(/\D/g, "")).filter(Boolean));
 const BLOCKLIST = digitsSet(process.env.BLOCKLIST);
 const ALLOWLIST = digitsSet(process.env.ALLOWLIST);
+// קידומות מדינה שלא עונים להן בכלל (ברירת מחדל: +1 — סוכנים ואוטומציות כמו Base44).
+const BLOCK_PREFIXES = String(process.env.BLOCK_PREFIXES ?? "1").split(/[,\s]+/).map(x => x.replace(/\D/g, "")).filter(Boolean);
 
 // השהיה "אנושית" לפני תשובה: תלויה באורך ובקצת אקראיות — לא תשובה מיידית כמו בוט.
 const shortDelay = (text) => Math.min(6500, 1800 + text.length * 22 + Math.random() * 1500) * Number(process.env.DELAY_FACTOR ?? 1);
@@ -100,11 +103,37 @@ export class WaSession {
     if (!Array.isArray(contacts)) return;
     // רק אנשי קשר מספר הטלפונים (שם מלא שנשמר בטלפון). שם שמגיע מסנכרון היסטוריית צ'אטים
     // הוא לרוב השם שהפונה בחר לעצמו — לא אומר שהוא שמור, ולכן לא נספר כאן.
+    const before = this.savedContacts.size;
     for (const c of contacts) {
       if (!c?.id || !c.name) continue;
       for (const j of [c.id, c.lid, c.phoneNumber]) if (typeof j === "string" && /@(s\.whatsapp\.net|lid)$/.test(j)) this.savedContacts.add(j);
     }
+    if (this.savedContacts.size !== before) this.saveContacts();
   }
+  // וואטסאפ שולחת את ספר הטלפונים רק בחיבור הראשון — לכן שומרים אותו בדיסק,
+  // אחרת אחרי כל הפעלה מחדש הבוט "שוכח" מי שמור ועונה לאנשי הקשר.
+  contactsFile() { return path.join(authDirOf(this.id), "_saved_contacts.json"); }
+  loadContacts() {
+    try { for (const j of JSON.parse(fs.readFileSync(this.contactsFile(), "utf8"))) this.savedContacts.add(j); } catch { /* אין עדיין */ }
+  }
+  saveContacts() {
+    clearTimeout(this._saveT);
+    this._saveT = setTimeout(() => {
+      try { fs.writeFileSync(this.contactsFile(), JSON.stringify([...this.savedContacts])); } catch { /* ignore */ }
+    }, 2000);
+  }
+  /** פעם אחת: מבקשים מוואטסאפ מחדש את כל ספר הטלפונים (אם עוד לא שמור אצלנו). */
+  async fetchContactsOnce(sock) {
+    const marker = path.join(authDirOf(this.id), "_contacts_synced");
+    if (fs.existsSync(marker) && this.savedContacts.size) return;
+    try {
+      await sock.authState?.keys?.set?.({ "app-state-sync-version": { critical_unblock_low: null } });
+      await sock.resyncAppState(["critical_unblock_low"], true);
+      fs.writeFileSync(marker, String(Date.now()));
+      console.log(`[${this.id}] ספר הטלפונים נטען: ${this.savedContacts.size} כתובות של אנשי קשר`);
+    } catch (e) { console.error(`[${this.id}] טעינת אנשי קשר נכשלה:`, e.message); }
+  }
+
 
   closeSocket() {
     if (!this.sock) return;
@@ -120,6 +149,7 @@ export class WaSession {
     const dir = authDirOf(this.id);
     fs.mkdirSync(dir, { recursive: true });
     const { state: auth, saveCreds } = await useMultiFileAuthState(dir);
+    this.loadContacts();
     const { version } = await fetchLatestBaileysVersion();
 
     const sock = makeWASocket({
@@ -152,6 +182,7 @@ export class WaSession {
         this.state.lastEvent = "מחובר ועונה";
         this.reconnectAttempts = 0;
         console.log(`[${this.id}] מחובר כ-${this.state.me}`);
+        setTimeout(() => { if (sock === this.sock) this.fetchContactsOnce(sock); }, 15000);
         // בדיקת שליחה אמיתית (רק כשמוגדר SELFTEST_TO): הודעה אחת לצ'אט "אני" של החיבור הראשי,
         // פעם אחת להפעלה — מוכיחה בשטח שהשליחה עובדת, בלי לפנות לאף אדם אחר.
         const selfTo = String(process.env.SELFTEST_TO || "").replace(/\D/g, "");
@@ -289,6 +320,7 @@ export class WaSession {
     try { await this.sock?.logout(); } catch { /* ignore */ }
     this.closeSocket();
     try { fs.rmSync(authDirOf(this.id), { recursive: true, force: true }); } catch { /* ignore */ }
+    this.savedContacts.clear();
     this.state = { ...this.state, status: "starting", qrDataUrl: null, pairingCode: null, me: null, lastEvent: "יוצר קוד QR חדש…" };
     await this.start();
   }
@@ -509,6 +541,7 @@ export class WaSession {
     const tenant = this.tenant;
     if (!tenant) return "אין חיבור";
     if (phoneDigits && BLOCKLIST.has(phoneDigits)) return "המספר ברשימת החסימה (BLOCKLIST)";
+    if (phoneDigits && !ALLOWLIST.has(phoneDigits) && BLOCK_PREFIXES.some(p => phoneDigits.startsWith(p))) return `מספר שמתחיל ב-+${BLOCK_PREFIXES.find(p => phoneDigits.startsWith(p))} — סוכן/אוטומציה, לא עונים`;
     if (!tenant.settings?.active) return "המענה האוטומטי כבוי";
     if (this.brain.isGloballyPaused()) return "הסוכן מושהה";
     const allowed = phoneDigits && ALLOWLIST.has(phoneDigits);

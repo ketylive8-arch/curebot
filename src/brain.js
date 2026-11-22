@@ -268,7 +268,9 @@ export function createBrain(getProfile = () => null) {
       // בשיחה שכבר מתנהלת (הבוט ענה והאדם ממשיך לכתוב) — לא מסווגים כספאם/פרסום.
       // אדם אמיתי באמצע שיחה יכול לשלוח הודעה ארוכה עם קישורים, וזה לא סיבה להפסיק לענות לו.
       const ongoing = !chat.promoAsked && chat.history.length >= 2;
-      const kind = ongoing ? "normal" : classifyMessage(userText);
+      // לעסק אחר: מילים מהפרופיל (סוג העסק, שירותים, בעיות שלקוחות מגיעים איתן) גם מסמנות רלוונטיות.
+      const bizWords = isBiz ? [...new Set(`${profile.businessType || ""} ${profile.services || ""} ${profile.problems || ""}`.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(w => w.length >= 4))] : [];
+      const kind = ongoing ? "normal" : classifyMessage(userText, bizWords);
       if (chat.promoAsked && !chat.promoResolved) {
         // שאלנו "זה בעקבות עניין בשירות?" — עכשיו מקשיבים לתשובה
         if (isYes(userText)) {
@@ -288,14 +290,9 @@ export function createBrain(getProfile = () => null) {
         chat.promoResolved = true; // כתבו משהו אמיתי — ממשיכים כרגיל
       }
       if (kind === "spam") return { reply: "", ignore: true, reason: "נראה כמו ספאם או דיוור — לא עונים" };
-      if (kind === "promo") {
-        chat.promoAsked = true;
-        const reply = isBiz
-          ? `היי, תודה שכתבת 🙂 רק כדי לדייק — זה בעקבות עניין ב${profile.businessName || "שירות שלנו"}?${site ? ` אם כן, כל הפרטים כאן: ${site}` : ""}`
-          : `היי, תודה שכתבת 🙂 רק כדי לדייק — פנית בעקבות עניין בליווי שלי? אם כן, אפשר לקרוא עוד כאן: ${SITE}\nואשמח לשמוע מה מביא אותך.`;
-        remember(chat, userText, reply);
-        return R(reply);
-      }
+      // פרסום / הצעת שירות / הודעה שלא קשורה לעסק — מסננים ולא עונים (נשאר לבעלים לראות בוואטסאפ).
+      if (kind === "promo") return { reply: "", ignore: true, reason: "פרסום / הצעת שירות — לא עונים" };
+      if (kind === "irrelevant") return { reply: "", ignore: true, reason: "לא קשור לפעילות העסק — לא עונים" };
       let raw = "";
       try {
         raw = await callOpenAI(isBiz ? businessPrompt(profile) : SYSTEM_PROMPT, [...chat.history, { role: "user", content: userText }]);
