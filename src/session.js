@@ -3,7 +3,7 @@
 //  כל חיבור מחזיק: סוקט משלו, פרטי התחברות בתיקייה משלו בדיסק הקבוע,
 //  ו"מוח" משלו (זיכרון שיחות, השהיות, לידים). שני חיבורים לא מתערבבים לעולם.
 // ============================================================
-import baileys, { DisconnectReason, useMultiFileAuthState, fetchLatestBaileysVersion, generateMessageIDV2 } from "@whiskeysockets/baileys";
+import baileys, { DisconnectReason, useMultiFileAuthState, fetchLatestBaileysVersion, generateMessageIDV2, proto, jidNormalizedUser } from "@whiskeysockets/baileys";
 import { Boom } from "@hapi/boom";
 import pino from "pino";
 import QRCode from "qrcode";
@@ -20,6 +20,23 @@ const makeWASocket = baileys.default || baileys;
 const genId = generateMessageIDV2;
 if (typeof genId !== "function") throw new Error("generateMessageIDV2 missing from Baileys");
 const log = pino({ level: "warn" });
+// לוגר לכל חיבור: כשוואטסאפ לא מוצאת מפתח לפענוח רשימת אנשי הקשר — תופסים את מזהה המפתח
+// ומבקשים אותו מהטלפון (כמו שוואטסאפ ווב עושה). כך ספר הטלפונים נטען בלי שום פעולה מצד הבעלים.
+function sessionLogger(onMissingKey) {
+  return pino({
+    level: "warn",
+    hooks: {
+      logMethod(args, method) {
+        try {
+          const blob = args.map(a => (typeof a === "string" ? a : JSON.stringify(a))).join(" ");
+          const m = blob.match(/failed to find key \\?"([A-Za-z0-9+/=]+)\\?"/);
+          if (m) onMissingKey(m[1]);
+        } catch { /* ignore */ }
+        return method.apply(this, args);
+      }
+    }
+  });
+}
 
 // רשימות כלליות מהגדרות השרת (מופרדות בפסיקים): חסימה = בוטים/אוטומציות שלא עונים להם,
 // היתר = מספרים שעונים להם תמיד (גם אם שמורים באנשי הקשר) — שימושי לבדיקות.
@@ -122,6 +139,29 @@ export class WaSession {
       try { fs.writeFileSync(this.contactsFile(), JSON.stringify([...this.savedContacts])); } catch { /* ignore */ }
     }, 2000);
   }
+  /** מבקש מהטלפון הראשי את מפתח ההצפנה של רשימת אנשי הקשר (פעם בשעה לכל מפתח). */
+  async requestAppStateKey(keyB64) {
+    const sock = this.sock;
+    if (!sock?.user?.id || !keyB64) return;
+    this._keyReq = this._keyReq || new Map();
+    if (Date.now() - (this._keyReq.get(keyB64) || 0) < 3600 * 1000) return;
+    this._keyReq.set(keyB64, Date.now());
+    try {
+      const meJid = jidNormalizedUser(sock.user.id);
+      await sock.relayMessage(meJid, {
+        protocolMessage: {
+          type: proto.Message.ProtocolMessage.Type.APP_STATE_SYNC_KEY_REQUEST,
+          appStateSyncKeyRequest: { keyIds: [{ keyId: Buffer.from(keyB64, "base64") }] }
+        }
+      }, {
+        additionalAttributes: { category: "peer", push_priority: "high_force" },
+        additionalNodes: [{ tag: "meta", attrs: { appdata: "default" } }]
+      });
+      console.log(`[${this.id}] ביקשתי מהטלפון את מפתח רשימת אנשי הקשר`);
+      // כשהמפתח מגיע, הספרייה מסנכרנת מחדש לבד; בודקים אחרי דקה כמה נטענו.
+      setTimeout(() => console.log(`[${this.id}] אנשי קשר שמורים כרגע: ${this.savedContacts.size}`), 60000);
+    } catch (e) { console.error(`[${this.id}] בקשת מפתח אנשי קשר נכשלה:`, e.message); }
+  }
   /** פעם אחת: מבקשים מוואטסאפ מחדש את כל ספר הטלפונים (אם עוד לא שמור אצלנו). */
   async fetchContactsOnce(sock) {
     const marker = path.join(authDirOf(this.id), "_contacts_synced");
@@ -153,7 +193,7 @@ export class WaSession {
     const { version } = await fetchLatestBaileysVersion();
 
     const sock = makeWASocket({
-      version, auth, logger: log, printQRInTerminal: false,
+      version, auth, logger: sessionLogger((k) => this.requestAppStateKey(k)), printQRInTerminal: false,
       markOnlineOnConnect: false, syncFullHistory: false,
       getMessage: async (key) => (key?.id && this.msgStore.get(key.id)) || undefined
     });
