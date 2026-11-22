@@ -290,6 +290,7 @@ export function createBrain(getProfile = () => null) {
         chat.promoResolved = true; // כתבו משהו אמיתי — ממשיכים כרגיל
       }
       if (kind === "spam") return { reply: "", ignore: true, reason: "נראה כמו ספאם או דיוור — לא עונים" };
+      if (kind === "auto") return { reply: "", ignore: true, reason: "הודעה אוטומטית / שליח / קוד אימות — לא עונים" };
       // פרסום / הצעת שירות / הודעה שלא קשורה לעסק — מסננים ולא עונים (נשאר לבעלים לראות בוואטסאפ).
       if (kind === "promo") return { reply: "", ignore: true, reason: "פרסום / הצעת שירות — לא עונים" };
       if (kind === "irrelevant") return { reply: "", ignore: true, reason: "לא קשור לפעילות העסק — לא עונים" };
