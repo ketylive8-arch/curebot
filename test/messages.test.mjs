@@ -175,6 +175,19 @@ ok(checkAll(Date.now(), (id) => (id === tenant.id ? s : null)).length === 0, "wa
 s.state.status = "connected";
 ok(checkAll(Date.now(), (id) => (id === tenant.id ? s : null))[0]?.msg.includes("חזר"), "watchdog: back online → 'reconnected' notice");
 
+// 26. script: greeting → story → invite to an intro call → lead writes a day/time → confirmation + green alert to the owner
+const f0 = sent.length;
+await s.handleMessage(inMsg("972560000001", "היי"));
+await s.handleMessage(inMsg("972560000001", "אני מרגישה לחץ כל הזמן ולא ישנה טוב"));
+ok(sent.at(-1).text.includes("calendly") && sent.at(-1).text.includes("יום ושעה"), "script: second answer invites to a free intro call (link or day/time)");
+await s.handleMessage(inMsg("972560000001", "אפשר ביום שלישי בערב"));
+const conf = sent.slice(f0).find(x => x.text.startsWith("רשמתי"));
+const hotAlert = sent.slice(f0).find(x => x.to === "972543032349@s.whatsapp.net" && x.text.includes("🟢"));
+ok(conf && hotAlert && hotAlert.text.includes("0560000001"), "script: day/time → confirmation to the lead + green alert with phone to the owner");
+const f1 = sent.length;
+await s.handleMessage(inMsg("972560000002", "שאלה מספר 3 על הטיפול שלך"));
+ok(sent.length === f1 + 1 && !sent.slice(f1).some(x => x.text.includes("🟢")), "script: a number in a question is not mistaken for a time");
+
 // 12. skipped lead records the reason
 s.savedContacts.add("972513434343@s.whatsapp.net");
 await s.handleMessage(inMsg("972513434343", "מה נשמע"));

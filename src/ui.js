@@ -293,8 +293,8 @@ async function renderConn(id) {
       : [[s.handled || 0, "הודעות שנענו"], [s.activeChats || 0, "שיחות פעילות"], [s.hot || 0, "ביקשו לדבר איתך"], [s.unanswered || 0, "שאלות בלי תשובה"]];
     document.getElementById("stats").innerHTML = tiles.map(([n, l]) => '<div class="stat"><b>' + n + "</b><span>" + l + "</span></div>").join("");
     document.getElementById("flagsBox").hidden = !!d.private;
-    const ICON = { alert: "🔴", human: "🟡", unanswered: "❔", unreadable: "🔒" };
-    const NOTE = { alert: "מצוקה — כדאי לחזור אישית", human: "ביקשו לדבר עם אדם", unanswered: "לא הייתה תשובה בטקסטים — כדאי להוסיף שאלה", unreadable: "הבוט לא הצליח לקרוא את ההודעה" };
+    const ICON = { alert: "🔴", hot: "🟢", human: "🟡", unanswered: "❔", unreadable: "🔒" };
+    const NOTE = { alert: "מצוקה — כדאי לחזור אישית", hot: "רוצה לקבוע שיחת היכרות — לחזור לאשר", human: "ביקשו לדבר עם אדם", unanswered: "לא הייתה תשובה בטקסטים — כדאי להוסיף שאלה", unreadable: "הבוט לא הצליח לקרוא את ההודעה" };
     document.getElementById("leadsBox").hidden = !!d.private;
     if (!d.private) {
       const ago = (t) => { const m = Math.round((Date.now() - t) / 60000); return m < 1 ? "עכשיו" : m < 60 ? "לפני " + m + " דק׳" : m < 1440 ? "לפני " + Math.round(m / 60) + " שע׳" : "לפני יום"; };

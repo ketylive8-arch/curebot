@@ -564,11 +564,13 @@ export class WaSession {
     if (out.human) this.brain.pause(convKey, 12);
     // לא הייתה תשובה בטקסטים של העסק — מסמנים לבעלים כדי שיוסיפו שאלה ותשובה.
     if (out.unanswered && !out.alert && !out.human) this.brain.flag(phoneDigits || jid.split("@")[0], text.trim(), false, "unanswered");
-    if (out.alert || out.human) {
+    if (out.alert || out.human || out.hot) {
       const from = phoneDigits || jid.split("@")[0];
-      this.brain.flag(from, text.trim(), out.alert);
+      this.brain.flag(from, text.trim(), out.alert, out.alert || out.human ? undefined : "hot");
       if (owner) {
-        const tag = out.alert ? "🔴 מצוקה — דורש התייחסות אישית" : "🟡 ביקשו לדבר איתך";
+        // ליד חם: כתב/ה יום ושעה לשיחת היכרות, או קבע/ה בקלנדלי — לחזור אליו/ה לאשר.
+        const tag = out.alert ? "🔴 מצוקה — דורש התייחסות אישית" : out.human ? "🟡 ביקשו לדבר איתך"
+          : `🟢 ליד רוצה לקבוע שיחת היכרות — כדאי לחזור לאשר${/^972\d+$/.test(from) ? `\nטלפון: 0${from.slice(3)}` : ""}`;
         try {
           await this.send(`${owner}@s.whatsapp.net`, { text: `${tag}\nמ: ${from}\n\nכתבו: ${text.trim()}\n\nהסוכן ענה: ${out.reply}` });
         } catch (e) { console.error(`[${this.id}] כשל בשליחת התראה:`, e.message); }
