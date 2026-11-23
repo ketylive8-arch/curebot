@@ -104,9 +104,10 @@ function localReply(userText, chat) {
       return R(`שאלה במקום 🙏 שיחת ההיכרות עצמה בלי עלות. המחיר של התהליך מותאם אישית — לפי מה שנכון לך — וקטי עוברת על זה יחד איתך בשיחה, בשקיפות מלאה.\n\nלבחירת זמן: ${CALENDLY}\nאו כתבי לי יום ושעה ואעביר לקטי.`);
     }
     if (HESITATE_RE.test(t)) {
-      if (c.softened) return R("בטח, קחי את הזמן 💛 אני כאן כשתרצי.", { ended: true });
+      // followup: תזכורת עדינה אחת בעוד שבוע (session.js מתזמן ושולח)
+      if (c.softened) return R("בטח, קחי את הזמן 💛 אני כאן כשתרצי.", { ended: true, followup: true });
       c.softened = true;
-      return R("לגמרי מובן, ואין שום לחץ 💛 שיחת ההיכרות היא רק כדי להכיר ולהבין אם זה בכלל מתאים — בלי התחייבות. אם נוח יותר, אפשר גם לקבוע לשבוע הבא. רוצה שאשמור לך מקום?");
+      return R("לגמרי מובן, ואין שום לחץ 💛 שיחת ההיכרות היא רק כדי להכיר ולהבין אם זה בכלל מתאים — בלי התחייבות. אם נוח יותר, אפשר גם לקבוע לשבוע הבא. רוצה שאשמור לך מקום?", { followup: true });
     }
     if (TIME_RE.test(t) && t.length <= 90) {
       c.proposed = true;
@@ -248,6 +249,8 @@ export function createBrain(getProfile = () => null) {
     isPaused: (jid) => getChat(jid).pausedUntil > Date.now(),
     pause: (jid, hours = 12) => { getChat(jid).pausedUntil = Date.now() + hours * 3600 * 1000; },
     resetChat: (jid) => { chats.delete(jid); },
+    /** אחרי תזכורת: השיחה כבר "אחרי הזמנה", כך ש"שלישי בערב" ייקלט כזמן לשיחת היכרות. */
+    markInvited: (jid) => { const c = getChat(jid); c.invited = true; c.softened = true; c.updated = Date.now(); },
     pauseAll: (v) => { globalPause = !!v; },
     isGloballyPaused: () => globalPause,
     countHandled: () => { handled++; },
@@ -326,11 +329,12 @@ export function createBrain(getProfile = () => null) {
       const alert = raw.includes("[[ALERT]]");
       const human = raw.includes("[[HUMAN]]");
       const hot = raw.includes("[[HOT]]");
-      const reply = raw.replace(/\[\[(END|ALERT|HUMAN|HOT)\]\]/g, "").trim();
+      const followup = raw.includes("[[FOLLOWUP]]");
+      const reply = raw.replace(/\[\[(END|ALERT|HUMAN|HOT|FOLLOWUP)\]\]/g, "").trim();
       remember(chat, userText, reply);
       let infoCard = false;
       if (ended && !chat.infoSent) { infoCard = true; chat.infoSent = true; }
-      return { reply, ended, alert, human, hot, infoCard };
+      return { reply, ended, alert, human, hot, followup, infoCard };
     }
   };
   return brain;

@@ -13,6 +13,7 @@ import { createBrain } from "./brain.js";
 import { transcribe } from "./transcribe.js";
 import { handleCommand, ownerContext, OWNER_SYSTEM, localManageReply } from "./owner.js";
 import { getTenant, authDirOf } from "./tenants.js";
+import { loadFollowups, saveFollowups, goodHour, followupText, FOLLOWUP_MS } from "./followup.js";
 
 // Baileys 6.7.x הוא CommonJS; תחת ESM ה-default עלול להגיע עטוף.
 const makeWASocket = baileys.default || baileys;
@@ -98,6 +99,7 @@ export class WaSession {
     this.replyTimes = new Map();   // שיחה → זמני התשובות (הגבלת קצב לשיחה)
     this.hourly = [];              // זמני כל התשובות בשעה האחרונה
     this.cooldown = new Map();     // שיחה → עד מתי הבוט עוצר בה (אחרי הצפה/לולאה)
+    this.followups = loadFollowups(tenantId); // שיחה → תזכורת אחרי שבוע (נשמר בדיסק)
   }
 
   get tenant() { return getTenant(this.id); }
@@ -191,6 +193,10 @@ export class WaSession {
   async start() {
     this.stopped = false;
     this.closeSocket();
+    if (!this.fuTimer) {
+      this.fuTimer = setInterval(() => this.runFollowups().catch(e => console.error(`[${this.id}] תזכורות:`, e.message)), 15 * 60 * 1000);
+      this.fuTimer.unref?.();
+    }
     const dir = authDirOf(this.id);
     fs.mkdirSync(dir, { recursive: true });
     const { state: auth, saveCreds } = await useMultiFileAuthState(dir);
@@ -333,6 +339,7 @@ export class WaSession {
       if (this.autoPaused.size > 300) this.autoPaused.delete(this.autoPaused.keys().next().value);
     }
 
+    this.cancelFollowup(jid, altJid, pn);
     this.brain.pause(jid, 12);
     // אותה שיחה יכולה להופיע גם בכתובת @lid וגם בכתובת הטלפון — עוצרים את שתיהן.
     if (altJid) this.brain.pause(altJid, 12);
@@ -542,6 +549,7 @@ export class WaSession {
       return;
     }
 
+    this.cancelFollowup(convKey, jid); // הפונה כתב/ה שוב — התזכורת הקודמת כבר לא רלוונטית
     const out = await this.brain.think(convKey, text.trim());
     if (out.ignore) {
       // ספאם / פרסום חוזר — לא עונים ולא מסמנים כנקרא (שיישאר לקטי למחוק)
@@ -561,6 +569,7 @@ export class WaSession {
     this.replyTimes.set(convKey, [...(this.replyTimes.get(convKey) || []), nowT]);
     this.trackLead(replyJid, phoneDigits || jid.split("@")[0], { status: "answered", reason: undefined });
 
+    if (out.followup && !out.human && !out.alert) this.scheduleFollowup(convKey, { jid, replyJid, phoneDigits });
     if (out.human) this.brain.pause(convKey, 12);
     // לא הייתה תשובה בטקסטים של העסק — מסמנים לבעלים כדי שיוסיפו שאלה ותשובה.
     if (out.unanswered && !out.alert && !out.human) this.brain.flag(phoneDigits || jid.split("@")[0], text.trim(), false, "unanswered");
@@ -576,6 +585,42 @@ export class WaSession {
         } catch (e) { console.error(`[${this.id}] כשל בשליחת התראה:`, e.message); }
       }
     }
+  }
+
+  scheduleFollowup(key, { jid, replyJid, phoneDigits }) {
+    this.followups.set(key, { jid, replyJid, phoneDigits, dueAt: Date.now() + FOLLOWUP_MS });
+    saveFollowups(this.id, this.followups);
+    console.log(`[${this.id}] ⏰ תזכורת לשיחה …${String(phoneDigits || key).replace(/@.*/, "").slice(-3)} בעוד ${Math.round(FOLLOWUP_MS / 86400000)} ימים`);
+  }
+  cancelFollowup(...keys) {
+    let changed = false;
+    for (const [k, f] of this.followups) {
+      if (keys.some(x => x && (x === k || x === f.jid || x === f.replyJid))) { this.followups.delete(k); changed = true; }
+    }
+    if (changed) saveFollowups(this.id, this.followups);
+  }
+  /** שולח תזכורות שהגיע זמנן — עד 3 בכל סבב, ברווח של דקה, רק בשעות סבירות. */
+  async runFollowups(now = Date.now(), { anyHour = false, gapMs = 60000 } = {}) {
+    if (!this.sock || this.state.status !== "connected" || !this.tenant?.settings?.active) return 0;
+    if (!anyHour && !goodHour(now)) return 0;
+    let n = 0;
+    for (const [key, f] of [...this.followups]) {
+      if (f.dueAt > now || n >= 3) continue;
+      this.followups.delete(key);
+      saveFollowups(this.id, this.followups);
+      const why = this.gateReason({ jid: f.jid, replyJid: f.replyJid, phoneDigits: f.phoneDigits });
+      const tail = String(f.phoneDigits || key).replace(/@.*/, "").slice(-3);
+      if (why) { console.log(`[${this.id}] תזכורת ל…${tail} בוטלה: ${why}`); continue; }
+      if (n) await new Promise(r => setTimeout(r, gapMs));
+      try {
+        await this.safeSend(f.replyJid, f.jid, { text: followupText(this.tenant.profile) });
+        this.brain.markInvited(key);
+        this.trackLead(key, f.phoneDigits || key.split("@")[0], { status: "answered", reason: "נשלחה תזכורת אחרי שבוע" });
+        console.log(`[${this.id}] ⏰ נשלחה תזכורת אחרי שבוע ל…${tail}`);
+        n++;
+      } catch (e) { console.error(`[${this.id}] תזכורת ל…${tail} נכשלה: ${e.message}`); }
+    }
+    return n;
   }
 
   /** האם מותר לענות לפונה הזה עכשיו? (חסימה, מושהה, איש קשר שמור, שיחה שנלקחה ידנית) */

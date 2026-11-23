@@ -188,6 +188,32 @@ const f1 = sent.length;
 await s.handleMessage(inMsg("972560000002", "שאלה מספר 3 על הטיפול שלך"));
 ok(sent.length === f1 + 1 && !sent.slice(f1).some(x => x.text.includes("🟢")), "script: a number in a question is not mistaken for a time");
 
+// 27. "I'll think about it" → one gentle reminder a week later (saved on disk), then a day/time from them is a hot lead
+s.state.status = "connected";
+await s.handleMessage(inMsg("972570000001", "היי"));
+await s.handleMessage(inMsg("972570000001", "אני מרגישה תקועה כבר הרבה זמן"));
+await s.handleMessage(inMsg("972570000001", "אחשוב על זה, זה יקר לי"));
+ok(s.followups.has("972570000001@s.whatsapp.net"), "hesitation → reminder scheduled");
+const { loadFollowups } = await import("../src/followup.js");
+ok(loadFollowups(tenant.id).has("972570000001@s.whatsapp.net"), "reminder survives a restart (saved on disk)");
+const r0 = sent.length;
+ok(await s.runFollowups(Date.now(), { anyHour: true, gapMs: 0 }) === 0 && sent.length === r0, "reminder is not sent before a week");
+ok(await s.runFollowups(Date.now() + 8 * 86400000, { anyHour: true, gapMs: 0 }) === 1 && sent.at(-1).text.includes("מה שלומך") && sent.at(-1).text.includes("calendly"), "after a week → one gentle reminder with the intro-call link");
+ok(await s.runFollowups(Date.now() + 9 * 86400000, { anyHour: true, gapMs: 0 }) === 0, "only one reminder, never again");
+await s.handleMessage(inMsg("972570000001", "כן, אפשר ביום ראשון ב-11"));
+ok(sent.some(x => x.text.includes("🟢") && x.text.includes("0570000001")), "reply to the reminder with a day/time → green alert to the owner");
+
+// 28. reminder is cancelled when the lead writes again, or when I answer them myself
+await s.handleMessage(inMsg("972570000002", "היי"));
+await s.handleMessage(inMsg("972570000002", "יש לי חרדות בלילה"));
+await s.handleMessage(inMsg("972570000002", "אין לי זמן עכשיו"));
+ok(s.followups.has("972570000002@s.whatsapp.net"), "second lead: reminder scheduled");
+const mine2 = { key: { remoteJid: "972570000002@s.whatsapp.net", fromMe: true, id: "R9" }, messageTimestamp: now(), message: { conversation: "היי, זו קטי, אשמח לדבר" } };
+if (s.isFresh(mine2)) s.noteManualReply(mine2);
+ok(!s.followups.has("972570000002@s.whatsapp.net"), "I answered myself → reminder cancelled");
+const { goodHour } = await import("../src/followup.js");
+ok(goodHour(Date.parse("2026-11-24T10:00:00Z")) && !goodHour(Date.parse("2026-11-28T10:00:00Z")) && !goodHour(Date.parse("2026-11-24T21:00:00Z")), "reminders only at reasonable hours (not Shabbat, not at night)");
+
 // 12. skipped lead records the reason
 s.savedContacts.add("972513434343@s.whatsapp.net");
 await s.handleMessage(inMsg("972513434343", "מה נשמע"));
