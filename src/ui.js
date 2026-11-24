@@ -269,6 +269,7 @@ async function renderConn(id) {
     '<section class="card section" id="leadsBox"><h2>פניות אחרונות</h2><div id="leads"></div></section>' +
     '<section class="card section"><h2>העסק והתשובות</h2><div id="biz"></div></section>' +
     '<section class="card section"><h2>הגדרות</h2><div id="sets"></div></section>' +
+    '<section class="card section" id="hubBox"><h2>HubSpot — רשימת הלידים</h2><div id="hub"></div></section>' +
     '<section class="card section" id="flagsBox"><h2>דורש את תשומת לבך</h2><div id="flags"></div></section>' +
     '<section class="card section"><h2>ניהול</h2><div class="row" id="mgmt"></div><div id="mgmtOut"></div></section>';
   let lastStatus = null, first = true;
@@ -322,7 +323,7 @@ async function renderConn(id) {
         : (me.role === "tenant"
           ? '<h2>🔒 פרטיות</h2><p style="margin:0">רק את/ה רואה את תוכן הפניות שלך. מנהלת המערכת רואה רק אם החיבור פעיל וכמה הודעות נענו. השיחות לא נשמרות בשרת — רק 10 ההודעות האחרונות בזיכרון, ל-48 שעות, ונמחקות.</p>'
           : '<h2>🔒 פרטיות</h2><p style="margin:0">זה החיבור שלך — רק את רואה את הפניות שלו. השיחות לא נשמרות בשרת: רק 10 ההודעות האחרונות בזיכרון, ל-48 שעות.</p>');
-      renderBiz(t); renderSettings(t, d.ai, d.private); renderMgmt(t); first = false; focusMain();
+      renderBiz(t); renderSettings(t, d.ai, d.private); renderHub(t, d.private); renderMgmt(t); first = false; focusMain();
     }
   }
 
@@ -520,6 +521,39 @@ async function renderConn(id) {
       try { await api("/api/tenants/" + encodeURIComponent(id), { method: "PATCH", body: { ownerNumber: document.getElementById("own").value } }); e.target.textContent = "נשמר ✓"; say("נשמר"); }
       catch (er) { say(er.message); }
     };
+  }
+
+  function renderHub(t, isPrivate) {
+    const box = document.getElementById("hubBox"), h = document.getElementById("hub");
+    if (isPrivate) { box.hidden = true; return; }
+    const hs = t.hubspot || {};
+    const steps = '<ol style="margin:8px 0 12px;padding-inline-start:20px;line-height:1.7">' +
+      '<li>פותחים חשבון חינמי ב-<a href="https://www.hubspot.com/products/crm" target="_blank" rel="noopener">HubSpot</a> (או נכנסים לחשבון קיים).</li>' +
+      '<li>בהגדרות (⚙️) ← <b>Integrations</b> ← <b>Private Apps</b> ← <b>Create a private app</b>, שם: CureBot.</li>' +
+      '<li>בלשונית <b>Scopes</b> מסמנים: <code>crm.objects.contacts.read</code> ו-<code>crm.objects.contacts.write</code> ← <b>Create app</b>.</li>' +
+      '<li>מעתיקים את ה-<b>Access token</b> ומדביקים כאן.</li></ol>';
+    h.innerHTML = hs.connected
+      ? '<p style="margin:0 0 8px">✅ <b>מחובר ל-HubSpot.</b> כל פנייה אמיתית נכנסת כאיש קשר (Lead) עם הטלפון והשם, ושלב הליד מתעדכן: חדש ← הוזמן לשיחה ← מתלבט ← רוצה לקבוע / לא מעוניין.</p>' +
+        (hs.error ? '<p class="err" style="margin:0 0 8px">⚠️ ' + esc(hs.error) + "</p>" : "") +
+        '<button class="btn btn-ghost" id="hubOff">ניתוק HubSpot</button>'
+      : '<p style="margin:0">חברי את HubSpot וכל ליד מהוואטסאפ ייכנס לשם לבד — עם הטלפון, השם, מאיפה הגיע ובאיזה שלב הוא.</p>' + steps +
+        '<label for="hubTok">Access token</label><div class="row"><input id="hubTok" type="password" autocomplete="off" spellcheck="false" style="flex:1;min-width:220px;direction:ltr" placeholder="pat-eu1-…">' +
+        '<button class="btn btn-gold" id="hubOn">חיבור ובדיקה</button></div><div id="hubMsg" role="status" class="muted" style="margin-top:6px"></div>';
+    const url = "/api/tenants/" + encodeURIComponent(id) + "/hubspot";
+    if (hs.connected) {
+      document.getElementById("hubOff").onclick = async () => {
+        if (!confirm("לנתק את HubSpot? הלידים שכבר נכנסו יישארו שם.")) return;
+        try { const r = await api(url, { method: "DELETE", body: {} }); say("HubSpot נותק"); renderHub(r.tenant, false); } catch (er) { say(er.message); }
+      };
+    } else {
+      document.getElementById("hubOn").onclick = async (e) => {
+        const msg = document.getElementById("hubMsg");
+        e.target.disabled = true; msg.textContent = "בודקת את החיבור…";
+        try { const r = await api(url, { method: "POST", body: { token: document.getElementById("hubTok").value } }); say("HubSpot מחובר ✓"); renderHub(r.tenant, false); }
+        catch (er) { msg.textContent = er.message; msg.className = "err"; say(er.message); }
+        finally { e.target.disabled = false; }
+      };
+    }
   }
 
   function renderMgmt(t) {

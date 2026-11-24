@@ -99,7 +99,7 @@ function localReply(userText, chat) {
       c.booked = true;
       return R("מעולה, איזה כיף 💛 קטי תתכונן לשיחה ותהיה איתך בזמן שבחרת. אם יעלה משהו לפני — אני כאן.", { ended: true, hot: true });
     }
-    if (NO_RE.test(t)) return R("בסדר גמור, ותודה שכתבת 🙏 אם תרצי בהמשך — את תמיד מוזמנת לחזור לכאן. שיהיה לך יום טוב 💛", { ended: true });
+    if (NO_RE.test(t)) { c.declined = true; return R("בסדר גמור, ותודה שכתבת 🙏 אם תרצי בהמשך — את תמיד מוזמנת לחזור לכאן. שיהיה לך יום טוב 💛", { ended: true }); }
     if (has("מחיר", "כמה עולה", "עלות", "תשלום", "כמה זה", "כמה כסף")) {
       return R(`שאלה במקום 🙏 שיחת ההיכרות עצמה בלי עלות. המחיר של התהליך מותאם אישית — לפי מה שנכון לך — וקטי עוברת על זה יחד איתך בשיחה, בשקיפות מלאה.\n\nלבחירת זמן: ${CALENDLY}\nאו כתבי לי יום ושעה ואעביר לקטי.`);
     }
@@ -219,6 +219,15 @@ export async function aiText(systemPrompt, userText) {
   return callOpenAI(systemPrompt, [{ role: "user", content: userText }]);
 }
 
+/** שלב הליד (ל-HubSpot ולפאנל): new | invited | hesitant | hot | declined */
+function stageOf(chat, out) {
+  if (chat.declined) return "declined";
+  if (out.hot || chat.booked || chat.proposed) return "hot";
+  if (out.followup) return "hesitant";
+  if (chat.invited) return "invited";
+  return "new";
+}
+
 const MAX_TURNS = 10;
 const TTL_MS = 48 * 60 * 60 * 1000;
 
@@ -323,7 +332,7 @@ export function createBrain(getProfile = () => null) {
         if (local.infoCard && chat.infoSent) local.infoCard = false;
         else if (local.infoCard) chat.infoSent = true;
         remember(chat, userText, local.reply);
-        return local;
+        return { ...local, stage: stageOf(chat, local) };
       }
       const ended = raw.includes("[[END]]");
       const alert = raw.includes("[[ALERT]]");
@@ -334,7 +343,9 @@ export function createBrain(getProfile = () => null) {
       remember(chat, userText, reply);
       let infoCard = false;
       if (ended && !chat.infoSent) { infoCard = true; chat.infoSent = true; }
-      return { reply, ended, alert, human, hot, followup, infoCard };
+      if (/שיחת היכרות|calendly/i.test(reply)) chat.invited = true;
+      if (hot) chat.proposed = true;
+      return { reply, ended, alert, human, hot, followup, infoCard, stage: stageOf(chat, { hot, followup }) };
     }
   };
   return brain;

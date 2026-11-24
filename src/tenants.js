@@ -60,8 +60,28 @@ function normPhone(p) {
 /** מה שמותר להחזיר לדפדפן — בלי ה-hash של הקוד */
 export function publicTenant(t) {
   if (!t) return null;
-  const { codeHash, ...rest } = t;
-  return rest;
+  const { codeHash, hubspot, ...rest } = t;
+  // הטוקן של HubSpot לא יוצא מהשרת — רק אם מחובר ומה התקלה האחרונה.
+  return { ...rest, hubspot: { connected: !!hubspot?.token, error: hubspot?.error || "", at: hubspot?.at || null } };
+}
+
+/** הטוקן של HubSpot לחיבור (או של HUBSPOT_TOKEN בשרת לחיבור של קטי). */
+export function hubspotToken(id) {
+  const t = getTenant(id);
+  return t?.hubspot?.token || (t?.adminOwned ? process.env.HUBSPOT_TOKEN || "" : "");
+}
+export function setHubspot(id, token) {
+  const t = getTenant(id);
+  if (!t) return null;
+  t.hubspot = token ? { token, at: new Date().toISOString(), error: "" } : undefined;
+  save(tenants);
+  return publicTenant(t);
+}
+export function setHubspotError(id, error) {
+  const t = getTenant(id);
+  if (!t?.hubspot || (t.hubspot.error || "") === (error || "")) return;
+  t.hubspot.error = error || "";
+  save(tenants);
 }
 
 export const listTenants = () => tenants.map(publicTenant);

@@ -12,7 +12,8 @@ import path from "path";
 import { createBrain } from "./brain.js";
 import { transcribe } from "./transcribe.js";
 import { handleCommand, ownerContext, OWNER_SYSTEM, localManageReply } from "./owner.js";
-import { getTenant, authDirOf } from "./tenants.js";
+import { getTenant, authDirOf, hubspotToken, setHubspotError } from "./tenants.js";
+import { createHubspot } from "./hubspot.js";
 import { loadFollowups, saveFollowups, goodHour, followupText, FOLLOWUP_MS } from "./followup.js";
 
 // Baileys 6.7.x הוא CommonJS; תחת ESM ה-default עלול להגיע עטוף.
@@ -100,6 +101,7 @@ export class WaSession {
     this.hourly = [];              // זמני כל התשובות בשעה האחרונה
     this.cooldown = new Map();     // שיחה → עד מתי הבוט עוצר בה (אחרי הצפה/לולאה)
     this.followups = loadFollowups(tenantId); // שיחה → תזכורת אחרי שבוע (נשמר בדיסק)
+    this.hub = createHubspot(tenantId, () => hubspotToken(tenantId), (err) => setHubspotError(tenantId, err)); // לידים ל-HubSpot
   }
 
   get tenant() { return getTenant(this.id); }
@@ -509,7 +511,7 @@ export class WaSession {
     // מחכים כמה שניות — אם האדם שולח עוד הודעות ברצף, עונים פעם אחת על הכל (כמו אדם).
     const p = this.pending.get(convKey) || { texts: [], keys: [] };
     p.texts.push(text.trim()); p.keys.push(m.key);
-    Object.assign(p, { jid, replyJid, phoneDigits, owner });
+    Object.assign(p, { jid, replyJid, phoneDigits, owner, name: p.name || m.pushName || "" });
     clearTimeout(p.timer);
     this.pending.set(convKey, p);
     if (DEBOUNCE_MS <= 0) { this.pending.delete(convKey); return this.reply(convKey, p); }
@@ -570,6 +572,9 @@ export class WaSession {
     this.trackLead(replyJid, phoneDigits || jid.split("@")[0], { status: "answered", reason: undefined });
 
     if (out.followup && !out.human && !out.alert) this.scheduleFollowup(convKey, { jid, replyJid, phoneDigits });
+    // הליד ל-HubSpot (אם החיבור מחובר ל-HubSpot) — ברקע, לא מעכב ולא מפיל את הבוט
+    const lead = this.leads.get(replyJid) || {};
+    this.hub.sync({ key: convKey, phone: phoneDigits, name: p.name, stage: out.stage || "new", source: lead.source?.label, first: lead.preview, text: text.trim() }).catch(() => {});
     if (out.human) this.brain.pause(convKey, 12);
     // לא הייתה תשובה בטקסטים של העסק — מסמנים לבעלים כדי שיוסיפו שאלה ותשובה.
     if (out.unanswered && !out.alert && !out.human) this.brain.flag(phoneDigits || jid.split("@")[0], text.trim(), false, "unanswered");

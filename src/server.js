@@ -6,7 +6,8 @@
 import express from "express";
 import { page } from "./ui.js";
 import { identify, login, setSession, clearSession, loginAllowed, loginFailed, loginOk, requireAdmin, requireTenantAccess, securityHeaders } from "./auth.js";
-import { listTenants, getTenant, createTenant, updateTenant, resetCode, removeTenant, publicTenant, ensureDefaultTenant } from "./tenants.js";
+import { listTenants, getTenant, createTenant, updateTenant, resetCode, removeTenant, publicTenant, ensureDefaultTenant, setHubspot } from "./tenants.js";
+import { verifyToken } from "./hubspot.js";
 import { startSession, getSession, dropSession } from "./session.js";
 import { aiState, diagnoseOpenAI, createBrain } from "./brain.js";
 import { sanitizeProfile } from "./business.js";
@@ -189,6 +190,23 @@ app.post("/api/tenants/:id/preview", requireTenantAccess, async (req, res) => {
   pv.holder.p = profile; // תמיד לפי הטיוטה הנוכחית
   const out = await pv.brain.think("preview", text);
   res.json({ reply: out.reply, human: !!out.human, alert: !!out.alert, unanswered: !!out.unanswered, mode: aiState().mode });
+});
+
+// HubSpot: כל עסק מחבר את החשבון שלו. מנהלת המערכת לא מחברת CRM לחיבור פרטי של מישהו אחר.
+app.post("/api/tenants/:id/hubspot", requireTenantAccess, async (req, res) => {
+  const t = getTenant(req.params.id);
+  if (!t) return res.status(404).json({ error: "החיבור לא נמצא" });
+  if (req.who.role === "admin" && !t.adminOwned) return res.status(403).json({ error: "רק בעל/ת החיבור יכול/ה לחבר את ה-HubSpot שלו/ה" });
+  const token = String(req.body?.token || "").trim();
+  const v = await verifyToken(token);
+  if (!v.ok) return res.status(400).json({ error: v.error });
+  res.json({ tenant: setHubspot(t.id, token) });
+});
+app.delete("/api/tenants/:id/hubspot", requireTenantAccess, (req, res) => {
+  const t = getTenant(req.params.id);
+  if (!t) return res.status(404).json({ error: "החיבור לא נמצא" });
+  if (req.who.role === "admin" && !t.adminOwned) return res.status(403).json({ error: "רק בעל/ת החיבור יכול/ה לנתק" });
+  res.json({ tenant: setHubspot(t.id, null) });
 });
 
 app.post("/api/tenants/:id/reset-code", requireAdmin, (req, res) => {
