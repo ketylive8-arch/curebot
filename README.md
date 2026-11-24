@@ -61,3 +61,12 @@
 | `BLOCKLIST` / `ALLOWLIST` | מספרים שלא עונים להם / שתמיד עונים להם |
 
 ⚠️ חיבור QR הוא שיטה לא-רשמית של וואטסאפ. וואטסאפ עלול להגביל מספר שפועל אוטומטית.
+
+## חיבור ל-CRM (בנוסף ל-HubSpot)
+בכל חיבור, בקטע "חיבור ל-CRM": בוחרים מערכת, מדביקים מפתח, ולוחצים "חיבור ובדיקה" (המערכת בודקת שאפשר לקרוא ממנה לפני ששומרים).
+- **Pipedrive** — API token. כל ליד: Person + Lead, שינויי שלב כ-Notes.
+- **monday.com** — API token + Board ID. עמודת טלפון בלוח מזוהה לבד; כל ליד: Item, שינויי שלב כ-Updates.
+- **Fireberry (Powerlink)** — Token ID. כל ליד: Account עם telephone1; ההיסטוריה נצברת בתיאור.
+- **Webhook** — כתובת https (Make / Zapier / n8n) לכל CRM אחר. JSON: `event` (lead/stage/test), `phone`, `phoneLocal`, `name`, `stage`, `stageLabel`, `source`, `firstMessage`, `lastMessage`, `at`. עם סיסמת חתימה: כותרת `X-CureBot-Signature: sha256=<HMAC>`.
+
+קריאה: לפני הכנסה מחפשים לפי טלפון — לקוח קיים לא משוכפל (רק הערה), ומסומן "קיים ב-CRM" בפניות האחרונות. המפתחות נשמרים בשרת בלבד.

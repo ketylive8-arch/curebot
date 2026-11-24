@@ -9,7 +9,7 @@
   },
   "scripts": {
     "start": "node src/server.js",
-    "test": "node test/messages.test.mjs && node test/generate.test.mjs && node test/hubspot.test.mjs"
+    "test": "node test/messages.test.mjs && node test/generate.test.mjs && node test/hubspot.test.mjs && node test/crm.test.mjs"
   },
   "dependencies": {
     "@hapi/boom": "10.0.1",

@@ -6,8 +6,9 @@
 import express from "express";
 import { page } from "./ui.js";
 import { identify, login, setSession, clearSession, loginAllowed, loginFailed, loginOk, requireAdmin, requireTenantAccess, securityHeaders } from "./auth.js";
-import { listTenants, getTenant, createTenant, updateTenant, resetCode, removeTenant, publicTenant, ensureDefaultTenant, setHubspot } from "./tenants.js";
+import { listTenants, getTenant, createTenant, updateTenant, resetCode, removeTenant, publicTenant, ensureDefaultTenant, setHubspot, setCrm } from "./tenants.js";
 import { verifyToken } from "./hubspot.js";
+import { verifyCrm, CRM_PROVIDERS } from "./crm.js";
 import { startSession, getSession, dropSession } from "./session.js";
 import { aiState, diagnoseOpenAI, createBrain } from "./brain.js";
 import { sanitizeProfile } from "./business.js";
@@ -207,6 +208,29 @@ app.delete("/api/tenants/:id/hubspot", requireTenantAccess, (req, res) => {
   if (!t) return res.status(404).json({ error: "החיבור לא נמצא" });
   if (req.who.role === "admin" && !t.adminOwned) return res.status(403).json({ error: "רק בעל/ת החיבור יכול/ה לנתק" });
   res.json({ tenant: setHubspot(t.id, null) });
+});
+
+// CRM נוסף (Pipedrive / monday / Fireberry / Webhook): בודקים שהחיבור עובד (קריאה) ורק אז שומרים.
+app.post("/api/tenants/:id/crm", requireTenantAccess, async (req, res) => {
+  const t = getTenant(req.params.id);
+  if (!t) return res.status(404).json({ error: "החיבור לא נמצא" });
+  if (req.who.role === "admin" && !t.adminOwned) return res.status(403).json({ error: "רק בעל/ת החיבור יכול/ה לחבר את ה-CRM שלו/ה" });
+  const provider = String(req.body?.provider || "");
+  if (!CRM_PROVIDERS[provider]) return res.status(400).json({ error: "בחרי מערכת CRM" });
+  const cfg = { provider };
+  for (const k of CRM_PROVIDERS[provider].fields) cfg[k] = String(req.body?.[k] || "").trim().slice(0, 500);
+  if (cfg.token) cfg.token = cfg.token.replace(/\s/g, "");
+  const v = await verifyCrm(cfg);
+  if (!v.ok) return res.status(400).json({ error: v.error });
+  if (v.extra?.phoneCol) cfg.phoneCol = v.extra.phoneCol;
+  if (v.extra?.account) cfg.account = String(v.extra.account).slice(0, 80);
+  res.json({ tenant: setCrm(t.id, cfg) });
+});
+app.delete("/api/tenants/:id/crm", requireTenantAccess, (req, res) => {
+  const t = getTenant(req.params.id);
+  if (!t) return res.status(404).json({ error: "החיבור לא נמצא" });
+  if (req.who.role === "admin" && !t.adminOwned) return res.status(403).json({ error: "רק בעל/ת החיבור יכול/ה לנתק" });
+  res.json({ tenant: setCrm(t.id, null) });
 });
 
 app.post("/api/tenants/:id/reset-code", requireAdmin, (req, res) => {

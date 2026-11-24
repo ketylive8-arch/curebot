@@ -12,7 +12,8 @@ import path from "path";
 import { createBrain } from "./brain.js";
 import { transcribe } from "./transcribe.js";
 import { handleCommand, ownerContext, OWNER_SYSTEM, localManageReply } from "./owner.js";
-import { getTenant, authDirOf, hubspotToken, setHubspotError } from "./tenants.js";
+import { getTenant, authDirOf, hubspotToken, setHubspotError, crmConfig, setCrmError } from "./tenants.js";
+import { createCrm } from "./crm.js";
 import { createHubspot } from "./hubspot.js";
 import { loadFollowups, saveFollowups, goodHour, followupText, FOLLOWUP_MS } from "./followup.js";
 
@@ -102,6 +103,7 @@ export class WaSession {
     this.cooldown = new Map();     // שיחה → עד מתי הבוט עוצר בה (אחרי הצפה/לולאה)
     this.followups = loadFollowups(tenantId); // שיחה → תזכורת אחרי שבוע (נשמר בדיסק)
     this.hub = createHubspot(tenantId, () => hubspotToken(tenantId), (err) => setHubspotError(tenantId, err)); // לידים ל-HubSpot
+    this.crm = createCrm(tenantId, () => crmConfig(tenantId), (err) => setCrmError(tenantId, err)); // לידים ל-CRM נוסף
   }
 
   get tenant() { return getTenant(this.id); }
@@ -457,7 +459,16 @@ export class WaSession {
       const source = leadSource(inner, text);
       const isNew = !this.leads.has(replyJid);
       this.trackLead(replyJid, phoneDigits || jid.split("@")[0], { source, preview: isNew ? (text || "").slice(0, 90) : undefined, status: "waiting", count: 1 });
-      if (isNew) console.log(`[${this.id}] מקור הפנייה מ…${last3}: ${source.label}`);
+      if (isNew) {
+        console.log(`[${this.id}] מקור הפנייה מ…${last3}: ${source.label}`);
+        // קריאה מה-CRM: הפונה כבר קיים שם? מסמנים בפניות האחרונות (בלי לעכב את התשובה).
+        this.crm.lookup(phoneDigits).then(r => {
+          if (!r?.found) return;
+          const l = this.leads.get(replyJid);
+          if (l) l.crm = "existing";
+          console.log(`[${this.id}] …${last3} כבר קיים ב-CRM`);
+        }).catch(() => {});
+      }
     }
 
     if (!text.trim() && audio) {
@@ -574,7 +585,9 @@ export class WaSession {
     if (out.followup && !out.human && !out.alert) this.scheduleFollowup(convKey, { jid, replyJid, phoneDigits });
     // הליד ל-HubSpot (אם החיבור מחובר ל-HubSpot) — ברקע, לא מעכב ולא מפיל את הבוט
     const lead = this.leads.get(replyJid) || {};
-    this.hub.sync({ key: convKey, phone: phoneDigits, name: p.name, stage: out.stage || "new", source: lead.source?.label, first: lead.preview, text: text.trim() }).catch(() => {});
+    const crmEv = { key: convKey, phone: phoneDigits, name: p.name, stage: out.stage || "new", source: lead.source?.label, first: lead.preview, text: text.trim() };
+    this.hub.sync(crmEv).catch(() => {});
+    this.crm.sync(crmEv).catch(() => {});
     if (out.human) this.brain.pause(convKey, 12);
     // לא הייתה תשובה בטקסטים של העסק — מסמנים לבעלים כדי שיוסיפו שאלה ותשובה.
     if (out.unanswered && !out.alert && !out.human) this.brain.flag(phoneDigits || jid.split("@")[0], text.trim(), false, "unanswered");

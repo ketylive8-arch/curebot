@@ -270,6 +270,7 @@ async function renderConn(id) {
     '<section class="card section"><h2>העסק והתשובות</h2><div id="biz"></div></section>' +
     '<section class="card section"><h2>הגדרות</h2><div id="sets"></div></section>' +
     '<section class="card section" id="hubBox"><h2>HubSpot — רשימת הלידים</h2><div id="hub"></div></section>' +
+    '<section class="card section" id="crmBox"><h2>חיבור ל-CRM</h2><div id="crm"></div></section>' +
     '<section class="card section" id="flagsBox"><h2>דורש את תשומת לבך</h2><div id="flags"></div></section>' +
     '<section class="card section"><h2>ניהול</h2><div class="row" id="mgmt"></div><div id="mgmtOut"></div></section>';
   let lastStatus = null, first = true;
@@ -304,6 +305,7 @@ async function renderConn(id) {
         ? s.leads.map(l => { const [c, lab] = ST[l.status] || ["", ""];
             return '<div class="lead"><div class="lead-top"><b>' + esc(phone(l.from) || l.from) + "</b>" + '<span class="pill ' + c + '"><i aria-hidden="true"></i>' + lab + "</span></div>" +
               '<div class="muted" style="font-size:14px">📍 ' + esc(l.source?.label || "לא ידוע") + " · " + ago(l.lastAt) + (l.count > 1 ? " · " + l.count + " הודעות" : "") + "</div>" +
+              (l.crm === "existing" ? '<div class="muted" style="font-size:14px">📇 כבר קיים/ת ב-CRM</div>' : "") +
               (l.preview ? '<div class="lead-text">' + esc(l.preview) + "</div>" : "") +
               (l.status === "skipped" && l.reason ? '<div class="muted" style="font-size:14px">למה: ' + esc(l.reason) + "</div>" : "") +
               (l.status === "skipped" && /נלקחה ידנית|עצר בה/.test(l.reason || "") ? '<button class="btn btn-ghost resume" data-key="' + esc(l.key) + '" style="min-height:40px;margin-top:8px">החזרת הבוט לשיחה</button>' : "") + "</div>"; }).join("")
@@ -323,7 +325,7 @@ async function renderConn(id) {
         : (me.role === "tenant"
           ? '<h2>🔒 פרטיות</h2><p style="margin:0">רק את/ה רואה את תוכן הפניות שלך. מנהלת המערכת רואה רק אם החיבור פעיל וכמה הודעות נענו. השיחות לא נשמרות בשרת — רק 10 ההודעות האחרונות בזיכרון, ל-48 שעות, ונמחקות.</p>'
           : '<h2>🔒 פרטיות</h2><p style="margin:0">זה החיבור שלך — רק את רואה את הפניות שלו. השיחות לא נשמרות בשרת: רק 10 ההודעות האחרונות בזיכרון, ל-48 שעות.</p>');
-      renderBiz(t); renderSettings(t, d.ai, d.private); renderHub(t, d.private); renderMgmt(t); first = false; focusMain();
+      renderBiz(t); renderSettings(t, d.ai, d.private); renderHub(t, d.private); renderCrm(t, d.private); renderMgmt(t); first = false; focusMain();
     }
   }
 
@@ -554,6 +556,57 @@ async function renderConn(id) {
         finally { e.target.disabled = false; }
       };
     }
+  }
+
+  // ── CRM נוסף: Pipedrive / monday / Fireberry / Webhook (Make, Zapier, n8n — לכל מערכת אחרת) ──
+  const CRM_UI = {
+    pipedrive: { label: "Pipedrive", fields: [["token", "API token", "password", "…"]],
+      steps: "ב-Pipedrive: לוחצים על התמונה שלך ← <b>Personal preferences</b> ← לשונית <b>API</b> ← מעתיקים את ה-<b>API token</b>." },
+    monday: { label: "monday.com", fields: [["token", "API token", "password", "eyJ…"], ["boardId", "מספר הלוח (Board ID)", "text", "1234567890"]],
+      steps: "ב-monday: התמונה שלך ← <b>Developers</b> ← <b>My access tokens</b> ← <b>Show</b> ← מעתיקים. מספר הלוח הוא המספר בכתובת הלוח אחרי <code>/boards/</code>. אם יש בלוח עמודת <b>טלפון</b>, הבוט ימלא אותה ויחפש לפיה כפילויות." },
+    fireberry: { label: "Fireberry (Powerlink)", fields: [["token", "API token (tokenid)", "password", "…"]],
+      steps: "ב-Fireberry: ⚙️ הגדרות ← <b>Integration</b> ← <b>API Forms / Token</b> ← מעתיקים את ה-<b>Token ID</b>. כל ליד נכנס כ<b>לקוח (Account)</b> עם הטלפון." },
+    webhook: { label: "כל מערכת אחרת — Webhook (Make / Zapier / n8n)", fields: [["url", "כתובת ה-Webhook", "url", "https://hook.eu1.make.com/…"], ["secret", "סיסמת חתימה (לא חובה)", "password", ""]],
+      steps: "יוצרים ב-Make / Zapier / n8n תרחיש שמתחיל ב-<b>Webhook</b>, מעתיקים את הכתובת לכאן, ומחברים ממנו ל-CRM שלך (Salesforce, Zoho, Google Sheets ועוד). כל ליד נשלח עם: טלפון, שם, מקור, הודעה ראשונה ושלב. בבדיקה נשלחת הודעת test אחת." }
+  };
+  function renderCrm(t, isPrivate) {
+    const box = document.getElementById("crmBox"), c = document.getElementById("crm");
+    if (isPrivate) { box.hidden = true; return; }
+    const cr = t.crm || {};
+    const url = "/api/tenants/" + encodeURIComponent(id) + "/crm";
+    if (cr.connected) {
+      const lab = (CRM_UI[cr.provider] || {}).label || cr.provider;
+      c.innerHTML = '<p style="margin:0 0 8px">✅ <b>מחובר ל-' + esc(lab) + "</b>" + (cr.account ? " · " + esc(cr.account) : "") + ".</p>" +
+        '<p class="muted" style="margin:0 0 8px">לפני שליד נכנס, הבוט בודק לפי הטלפון אם הוא כבר קיים אצלך (אז רק מוסיף הערה, בלי כפילות). כל פונה אמיתי חדש נכנס עם הטלפון, השם, המקור וההודעה הראשונה, וכל שינוי שלב נרשם.' +
+        (cr.provider === "monday" && !cr.phoneCol ? " <b>שימי לב:</b> בלוח אין עמודת טלפון — הטלפון נכתב בשם הפריט, ובדיקת כפילויות נעשית רק מכאן." : "") + "</p>" +
+        (cr.error ? '<p class="err" style="margin:0 0 8px">⚠️ ' + esc(cr.error) + "</p>" : "") +
+        '<button class="btn btn-ghost" id="crmOff">ניתוק</button>';
+      document.getElementById("crmOff").onclick = async () => {
+        if (!confirm("לנתק את ה-CRM? הלידים שכבר נכנסו יישארו שם.")) return;
+        try { const r = await api(url, { method: "DELETE", body: {} }); say("ה-CRM נותק"); renderCrm(r.tenant, false); } catch (er) { say(er.message); }
+      };
+      return;
+    }
+    c.innerHTML = '<p style="margin:0 0 10px">חברי את מערכת ה-CRM שלך, וכל ליד אמיתי מהוואטסאפ ייכנס אליה לבד. ספאם, פרסומות ושליחים לא נכנסים.</p>' +
+      '<label for="crmProv">איזו מערכת?</label><select id="crmProv" style="width:100%;min-height:52px;border:1px solid var(--line);background:var(--surface);border-radius:14px;padding:0 12px;font:inherit;color:var(--ink);margin-bottom:12px">' +
+      Object.entries(CRM_UI).map(([k, v]) => '<option value="' + k + '">' + esc(v.label) + "</option>").join("") + "</select>" +
+      '<div id="crmForm"></div>';
+    const draw = () => {
+      const k = document.getElementById("crmProv").value, def = CRM_UI[k];
+      document.getElementById("crmForm").innerHTML = '<p class="muted" style="margin:0 0 12px;line-height:1.7">' + def.steps + "</p>" +
+        def.fields.map(([f, lab, type, ph]) => '<div class="field"><label for="crm_' + f + '">' + esc(lab) + '</label><input id="crm_' + f + '" type="' + type + '" autocomplete="off" spellcheck="false" style="direction:ltr" placeholder="' + esc(ph) + '"></div>').join("") +
+        '<button class="btn btn-gold" id="crmOn">חיבור ובדיקה</button><div id="crmMsg" role="status" class="muted" style="margin-top:6px"></div>';
+      document.getElementById("crmOn").onclick = async (e) => {
+        const msg = document.getElementById("crmMsg"), body = { provider: k };
+        def.fields.forEach(([f]) => { body[f] = document.getElementById("crm_" + f).value; });
+        e.target.disabled = true; msg.className = "muted"; msg.textContent = "בודקת שאפשר לקרוא מה-" + def.label + "…";
+        try { const r = await api(url, { method: "POST", body }); say(def.label + " מחובר ✓"); renderCrm(r.tenant, false); }
+        catch (er) { msg.textContent = er.message; msg.className = "err"; say(er.message); }
+        finally { e.target.disabled = false; }
+      };
+    };
+    document.getElementById("crmProv").onchange = draw;
+    draw();
   }
 
   function renderMgmt(t) {

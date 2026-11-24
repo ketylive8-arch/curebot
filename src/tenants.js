@@ -60,9 +60,13 @@ function normPhone(p) {
 /** מה שמותר להחזיר לדפדפן — בלי ה-hash של הקוד */
 export function publicTenant(t) {
   if (!t) return null;
-  const { codeHash, hubspot, ...rest } = t;
-  // הטוקן של HubSpot לא יוצא מהשרת — רק אם מחובר ומה התקלה האחרונה.
-  return { ...rest, hubspot: { connected: !!hubspot?.token, error: hubspot?.error || "", at: hubspot?.at || null } };
+  const { codeHash, hubspot, crm, ...rest } = t;
+  // המפתחות של HubSpot / ה-CRM לא יוצאים מהשרת — רק אם מחובר, לאיזו מערכת ומה התקלה האחרונה.
+  return {
+    ...rest,
+    hubspot: { connected: !!hubspot?.token, error: hubspot?.error || "", at: hubspot?.at || null },
+    crm: crm?.provider ? { connected: true, provider: crm.provider, account: crm.account || "", boardId: crm.boardId || "", phoneCol: !!crm.phoneCol, error: crm.error || "", at: crm.at || null } : { connected: false }
+  };
 }
 
 /** הטוקן של HubSpot לחיבור (או של HUBSPOT_TOKEN בשרת לחיבור של קטי). */
@@ -81,6 +85,25 @@ export function setHubspotError(id, error) {
   const t = getTenant(id);
   if (!t?.hubspot || (t.hubspot.error || "") === (error || "")) return;
   t.hubspot.error = error || "";
+  save(tenants);
+}
+
+/** הגדרות ה-CRM של חיבור (כולל מפתחות — לשימוש בשרת בלבד). */
+export function crmConfig(id) {
+  const c = getTenant(id)?.crm;
+  return c?.provider ? c : null;
+}
+export function setCrm(id, cfg) {
+  const t = getTenant(id);
+  if (!t) return null;
+  t.crm = cfg ? { ...cfg, at: new Date().toISOString(), error: "" } : undefined;
+  save(tenants);
+  return publicTenant(t);
+}
+export function setCrmError(id, error) {
+  const t = getTenant(id);
+  if (!t?.crm || (t.crm.error || "") === (error || "")) return;
+  t.crm.error = error || "";
   save(tenants);
 }
 
